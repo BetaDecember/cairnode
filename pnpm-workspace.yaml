@@ -1,0 +1,7 @@
+# Electron ships a postinstall that downloads its native binary. pnpm 11 blocks
+# dependency build scripts by default, so it must be allowlisted explicitly.
+onlyBuiltDependencies:
+  - electron
+
+minimumReleaseAgeExclude:
+  - electron@45.3.3

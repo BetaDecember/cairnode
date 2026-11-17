@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+
+# Reference material extracted from the installed app. NEVER commit.
+docs/reference.md
+docs/reference/

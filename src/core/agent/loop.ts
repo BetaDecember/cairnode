@@ -5,6 +5,7 @@ import { OllamaProvider } from '../provider/ollama.ts'
 import { PermissionBroker } from './permission.ts'
 import type { PermissionDecision, PermissionRequest } from './permission.ts'
 import { buildSystemPrompt } from './prompt.ts'
+import { compactConversation, microcompact } from './compact.ts'
 import { toolByName } from '../tools/builtin.ts'
 import type { Tool } from '../tools/types.ts'
 import { contextFraction, estimateMessagesTokens } from '../tokens.ts'
@@ -24,6 +25,16 @@ export interface AgentRunOptions {
   /** Extra instructions appended to the system prompt, e.g. project memory. */
   projectMemory?: string
   /**
+   * Called when history was replaced by a summary, so the host can persist the
+   * boundary. Awaited before the run continues.
+   */
+  onCompaction?: (record: {
+    at: string
+    summary: string
+    task: string
+    dropped: number
+  }) => void | Promise<void>
+  /**
    * Called for every message the loop appends to history, including tool
    * results. Used to persist a session incrementally. Awaited, so a slow disk
    * applies backpressure instead of racing the transcript.
@@ -32,6 +43,12 @@ export interface AgentRunOptions {
   maxTurns?: number
   /** Fraction of the context window at which the run stops cleanly. */
   contextCeiling?: number
+  /** Fraction at which old tool output is replaced with stubs. */
+  trimAt?: number
+  /** Fraction at which the conversation is summarized. Defaults to the ceiling. */
+  compactAt?: number
+  /** Set false to keep the hard stop at the ceiling. */
+  autoCompact?: boolean
 }
 
 /** How often the loop checks for buffered tool output while a tool is running. */
@@ -85,6 +102,15 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
   const allTools = options.tools ?? []
   const maxTurns = options.maxTurns ?? 25
   const ceiling = options.contextCeiling ?? 0.85
+  const compactAt = options.compactAt ?? ceiling
+  const trimAt = options.trimAt ?? 0.6
+  const autoCompact = options.autoCompact ?? true
+
+  const toolSchemas = allTools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }))
 
   const broker = new PermissionBroker(
     options.mode,
@@ -102,7 +128,23 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
     if (options.onMessage) await options.onMessage(message)
   }
 
+  const usageFor = (promptTokens: number, outputTokens: number, estimated: boolean, cached = 0) => ({
+    promptTokens,
+    outputTokens,
+    contextPct: contextFraction(promptTokens + outputTokens, options.numCtx),
+    contextWindow: options.numCtx,
+    estimated,
+    cachedTokens: cached,
+  })
+
   let lastUsage = { promptTokens: 0, outputTokens: 0 }
+  /**
+   * Messages already covered by `lastUsage`. The assistant reply is counted by
+   * `outputTokens`, so the index skips it; anything after (tool results) is the
+   * delta the provider has not seen yet.
+   */
+  let countedThrough = 0
+  let compactions = 0
 
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
@@ -114,15 +156,125 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
       const estimated = estimateMessagesTokens(
         messages.map((message) => ({ role: message.role, content: message.content })),
       )
-      const used = lastUsage.promptTokens || estimated
-      const usedFraction = contextFraction(used, options.numCtx)
+      // The last response's output is now part of the history, so it counts
+      // toward the next prompt as well. Tool results were appended after that
+      // response and are not in `prompt_eval_count`, so estimate the delta.
+      const delta = lastUsage.promptTokens
+        ? estimateMessagesTokens(
+            messages
+              .slice(countedThrough)
+              .map((message) => ({ role: message.role, content: message.content })),
+          )
+        : 0
+      const used = lastUsage.promptTokens
+        ? lastUsage.promptTokens + lastUsage.outputTokens + delta
+        : estimated
+      let usedFraction = contextFraction(used, options.numCtx)
+
+      // Tier 1: stub old tool output. Free, deterministic, and enough to keep
+      // most sessions under the ceiling without a model call.
+      if (usedFraction >= trimAt) {
+        const trimmed = microcompact(messages.slice(1))
+        if (trimmed.changed) {
+          messages.splice(1, messages.length - 1, ...trimmed.messages)
+          lastUsage = { promptTokens: 0, outputTokens: 0 }
+          countedThrough = 0
+          const next = estimateMessagesTokens(
+            messages.map((message) => ({ role: message.role, content: message.content })),
+          )
+          usedFraction = contextFraction(next, options.numCtx)
+          yield { type: 'usage', usage: usageFor(next, 0, true) }
+        }
+      }
+
+      // Tier 2: one summarization pass. Rare, so the cache invalidation is
+      // acceptable; after it the session continues instead of failing.
+      if (usedFraction >= compactAt && autoCompact) {
+        if (messages.length <= 2 || compactions >= 2) {
+          yield {
+            type: 'error',
+            errorClass: 'context_overflow',
+            retryable: false,
+            detail: `Context is ${Math.round(usedFraction * 100)}% full of a ${options.numCtx.toLocaleString()}-token window, and there is nothing left to compact. Start a new session for this task.`,
+          }
+          yield { type: 'done', stopReason: 'context_full' }
+          return
+        }
+
+        yield { type: 'session_state', state: 'compacting' }
+        let result
+        try {
+          result = await compactConversation(messages.slice(1), {
+            provider,
+            model: options.model,
+            numCtx: options.numCtx,
+            tools: toolSchemas,
+            signal: options.signal,
+          })
+        } catch (error) {
+          if (options.signal?.aborted) {
+            yield { type: 'done', stopReason: 'cancelled' }
+            return
+          }
+          const detail = error instanceof Error ? error.message : String(error)
+          yield {
+            type: 'error',
+            errorClass: 'context_overflow',
+            retryable: false,
+            detail: `Context is ${Math.round(usedFraction * 100)}% full of a ${options.numCtx.toLocaleString()}-token window. Compacting it failed: ${detail}`,
+          }
+          yield { type: 'done', stopReason: 'context_full' }
+          return
+        }
+
+        const system = messages[0]
+        if (!system) {
+          yield { type: 'done', stopReason: 'error' }
+          return
+        }
+        messages.splice(0, messages.length, system, ...result.messages)
+        lastUsage = { promptTokens: 0, outputTokens: 0 }
+        countedThrough = 0
+        compactions += 1
+
+        const at = new Date().toISOString()
+        await options.onCompaction?.({
+          at,
+          summary: result.summary,
+          task: result.task,
+          dropped: result.dropped,
+        })
+        yield {
+          type: 'compaction',
+          summary: result.summary,
+          task: result.task,
+          dropped: result.dropped,
+        }
+
+        const next = estimateMessagesTokens(
+          messages.map((message) => ({ role: message.role, content: message.content })),
+        )
+        usedFraction = contextFraction(next, options.numCtx)
+        yield { type: 'usage', usage: usageFor(next, 0, true) }
+
+        if (usedFraction >= ceiling) {
+          yield {
+            type: 'error',
+            errorClass: 'context_overflow',
+            retryable: false,
+            detail: `Compaction left the context at ${Math.round(usedFraction * 100)}% of a ${options.numCtx.toLocaleString()}-token window. Raise the window or start a new session.`,
+          }
+          yield { type: 'done', stopReason: 'context_full' }
+          return
+        }
+      }
 
       if (usedFraction >= ceiling) {
         yield {
           type: 'error',
           errorClass: 'context_overflow',
           retryable: false,
-          detail: `Context is ${Math.round(usedFraction * 100)}% full of a ${options.numCtx.toLocaleString()}-token window. Compaction is not implemented yet — start a new session for a long task.`,
+          detail: `Context is ${Math.round(usedFraction * 100)}% full of a ${options.numCtx.toLocaleString()}-token window. Start a new session for a long task.`,
         }
         yield { type: 'done', stopReason: 'context_full' }
         return
@@ -138,11 +290,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
       for await (const event of provider.chat({
         model: options.model,
         messages,
-        tools: allTools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        })),
+        tools: toolSchemas,
         numCtx: options.numCtx,
         think: options.think,
         signal: options.signal,
@@ -168,6 +316,9 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
               promptTokens: event.promptTokens,
               outputTokens: event.outputTokens,
             }
+            // The assistant message is appended below and already paid for by
+            // `outputTokens`; the index points just past it.
+            countedThrough = messages.length + 1
             yield {
               type: 'usage',
               usage: {

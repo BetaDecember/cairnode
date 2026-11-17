@@ -23,6 +23,8 @@ export interface ChatMessage {
   ok?: boolean
   /** Diff produced by a write or edit, for transcript restore. Providers ignore it. */
   uiDiff?: { path: string; added: number; removed: number; lines: string[] }
+  /** Marks a compaction summary, not a real user turn. Providers ignore it. */
+  synthetic?: 'summary'
 }
 
 export interface ModelRef {

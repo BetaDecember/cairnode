@@ -148,6 +148,72 @@ describe('SessionStore', () => {
     assert.equal(record?.messages.length, 3)
   })
 
+  it('gives the model the latest summary while keeping the transcript', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+
+    await sessions.append(id, [
+      { role: 'user', content: 'Add multiply to math.js' },
+      { role: 'assistant', content: 'Done.' },
+    ])
+    await sessions.appendCompaction(id, {
+      at: new Date().toISOString(),
+      summary: 'Added multiply and ran the tests.',
+      task: 'Add multiply to math.js',
+      dropped: 2,
+    })
+    await sessions.append(id, [{ role: 'user', content: 'Now add divide' }])
+
+    const record = await sessions.load(id)
+    assert.ok(record)
+    assert.equal(record.messages.length, 3)
+    assert.equal(record.compactions.length, 1)
+    assert.equal(record.compactions[0]?.index, 2)
+    assert.equal(record.history.length, 3)
+    assert.equal(record.history[0]?.synthetic, 'summary')
+    assert.match(record.history[0]?.content ?? '', /Added multiply and ran the tests\./)
+    assert.equal(record.history[1]?.content, 'Add multiply to math.js')
+    assert.equal(record.history[2]?.content, 'Now add divide')
+  })
+
+  it('starts the model history at the most recent compaction', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+
+    await sessions.append(id, [{ role: 'user', content: 'one' }])
+    await sessions.appendCompaction(id, {
+      at: new Date().toISOString(),
+      summary: 'first',
+      task: 'one',
+      dropped: 1,
+    })
+    await sessions.append(id, [{ role: 'user', content: 'two' }])
+    await sessions.appendCompaction(id, {
+      at: new Date().toISOString(),
+      summary: 'second',
+      task: 'two',
+      dropped: 3,
+    })
+    await sessions.append(id, [{ role: 'user', content: 'three' }])
+
+    const record = await sessions.load(id)
+    assert.equal(record?.compactions.length, 2)
+    assert.equal(record?.history.length, 3)
+    assert.match(record?.history[0]?.content ?? '', /^Summary of earlier work[\s\S]*second/)
+    assert.equal(record?.history[1]?.content, 'two')
+    assert.equal(record?.history[2]?.content, 'three')
+  })
+
+  it('returns the plain conversation when nothing was compacted', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+    await sessions.append(id, [{ role: 'user', content: 'hello' }])
+
+    const record = await sessions.load(id)
+    assert.deepEqual(record?.history, record?.messages)
+    assert.deepEqual(record?.compactions, [])
+  })
+
   it('returns no sessions for a directory that does not exist yet', async () => {
     const sessions = new SessionStore(path.join(os.tmpdir(), 'recode-missing-dir-xyz'))
     assert.deepEqual(await sessions.list(), [])

@@ -13,6 +13,18 @@ export type SessionState =
   | 'awaiting_permission'
   | 'compacting'
 
+/** A stored boundary where history was replaced by a summary. */
+export interface CompactionRecord {
+  at: string
+  summary: string
+  /** The active user instruction kept verbatim after the summary. */
+  task: string
+  /** Conversation messages replaced by the summary. */
+  dropped: number
+  /** Index in the stored transcript where the boundary sits. */
+  index: number
+}
+
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export type StopReason =
@@ -84,6 +96,14 @@ export type AgentEvent =
     }
   | { type: 'todo_update'; items: TodoItem[] }
   | { type: 'usage'; usage: Usage }
+  | {
+      type: 'compaction'
+      summary: string
+      /** The user instruction kept verbatim after the summary. */
+      task: string
+      /** Conversation messages replaced by the summary. */
+      dropped: number
+    }
   | { type: 'error'; errorClass: ErrorClass; retryable: boolean; detail: string }
   | { type: 'done'; stopReason: StopReason }
 

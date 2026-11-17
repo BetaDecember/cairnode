@@ -23,6 +23,8 @@ export function Composer() {
   const mode = useApp((state) => state.mode)
   const cycleMode = useApp((state) => state.cycleMode)
   const usage = useApp((state) => state.fold.usage)
+  const compacting = useApp((state) => state.compacting)
+  const compact = useApp((state) => state.compact)
 
   // Auto-grow up to ~9 lines, then scroll.
   useEffect(() => {
@@ -34,7 +36,7 @@ export function Composer() {
 
   const submit = () => {
     const text = value.trim()
-    if (!text || running) return
+    if (!text || running || compacting) return
     setValue('')
     void send(text)
   }
@@ -104,7 +106,7 @@ export function Composer() {
                 type="button"
                 onClick={() => (running ? void abort() : submit())}
                 aria-label={running ? 'Stop' : 'Send'}
-                disabled={!running && !value.trim()}
+                disabled={!running && (!value.trim() || compacting)}
                 className={cn(
                   'flex size-7 items-center justify-center rounded-full transition-colors',
                   running
@@ -120,7 +122,13 @@ export function Composer() {
           </div>
         </div>
 
-        <UsageLine usage={usage} modelWindow={modelWindow} />
+        <UsageLine
+          usage={usage}
+          modelWindow={modelWindow}
+          compacting={compacting}
+          canCompact={!running}
+          onCompact={() => void compact()}
+        />
       </div>
     </div>
   )
@@ -129,6 +137,9 @@ export function Composer() {
 function UsageLine({
   usage,
   modelWindow,
+  compacting,
+  canCompact,
+  onCompact,
 }: {
   usage: {
     promptTokens: number
@@ -138,6 +149,9 @@ function UsageLine({
     cachedTokens: number
   } | null
   modelWindow: number
+  compacting: boolean
+  canCompact: boolean
+  onCompact: () => void
 }) {
   const used = usage ? usage.promptTokens + usage.outputTokens : 0
   const contextWindow = usage?.contextWindow ?? modelWindow
@@ -168,6 +182,23 @@ function UsageLine({
         </>
       ) : (
         <span>Ready</span>
+      )}
+
+      {(compacting || (usage && pct >= 55)) && (
+        <button
+          type="button"
+          onClick={onCompact}
+          disabled={!canCompact || compacting}
+          title="Summarize earlier turns to free context"
+          className={cn(
+            'rounded border border-line px-1.5 py-[1px] text-[10.5px] transition-colors',
+            compacting
+              ? 'animate-pulse text-ink-muted'
+              : 'text-ink-muted hover:border-line-strong hover:text-ink disabled:opacity-50',
+          )}
+        >
+          {compacting ? 'Compacting…' : 'Compact'}
+        </button>
       )}
 
       <span className="ml-auto">local · $0.00</span>

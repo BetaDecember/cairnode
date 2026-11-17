@@ -1,4 +1,4 @@
-import type { AgentEvent, ErrorClass, TodoItem, Usage } from '@core/types'
+import type { AgentEvent, CompactionRecord, ErrorClass, TodoItem, Usage } from '@core/types'
 import type { ChatMessage } from '@core/provider/types'
 import type { Block, TranscriptItem } from './transcript'
 
@@ -246,6 +246,20 @@ export function reduce(fold: Fold, event: AgentEvent): Fold {
     case 'usage':
       return { ...fold, usage: event.usage }
 
+    case 'compaction': {
+      const sealed = seal(fold)
+      const items = sealed.items.slice()
+      items.push({
+        kind: 'divider',
+        id: nextId('c'),
+        label: `Context compacted — ${event.dropped} earlier messages summarized`,
+        detail: event.summary,
+      })
+      // The run continues in a fresh turn after the boundary.
+      items.push({ kind: 'assistant', id: nextId('a'), blocks: [] })
+      return { ...sealed, items, usage: null }
+    }
+
     case 'error': {
       const sealed = seal(fold)
       return editBlocks(sealed, (blocks) => [
@@ -308,12 +322,36 @@ function errorTitle(kind: ErrorClass): string {
  * Thinking is stored without its duration, so restored blocks show "Thought"
  * rather than a misleading "0s".
  */
-export function foldMessages(messages: ChatMessage[]): Fold {
+export function foldMessages(
+  messages: ChatMessage[],
+  compactions: CompactionRecord[] = [],
+): Fold {
   resetIds()
   const items: TranscriptItem[] = []
+  const boundaries = new Map<number, CompactionRecord[]>()
+  for (const compaction of compactions) {
+    const list = boundaries.get(compaction.index) ?? []
+    list.push(compaction)
+    boundaries.set(compaction.index, list)
+  }
+
   let current: Extract<TranscriptItem, { kind: 'assistant' }> | null = null
 
-  for (const message of messages) {
+  const insertBoundaries = (index: number): void => {
+    for (const compaction of boundaries.get(index) ?? []) {
+      items.push({
+        kind: 'divider',
+        id: nextId('c'),
+        label: `Context compacted — ${compaction.dropped} earlier messages summarized`,
+        detail: compaction.summary,
+      })
+      current = null
+    }
+  }
+
+  for (const [position, message] of messages.entries()) {
+    insertBoundaries(position)
+
     if (message.role === 'user') {
       items.push({ kind: 'user', id: nextId('u'), text: message.content })
       current = null
@@ -339,24 +377,24 @@ export function foldMessages(messages: ChatMessage[]): Fold {
     }
 
     if (message.role === 'tool' && current) {
-      const index = current.blocks.findIndex(
+      const match = current.blocks.findIndex(
         (block) =>
           block.type === 'tool' && block.status === 'running' && block.name === message.toolName,
       )
-      if (index === -1) continue
+      if (match === -1) continue
 
-      const tool = current.blocks[index]
+      const tool = current.blocks[match]
       if (tool?.type !== 'tool') continue
 
       current.blocks = current.blocks.map((block, at) =>
-        at === index
+        at === match
           ? { ...tool, status: message.ok === false ? 'error' : 'ok', output: message.content }
           : block,
       )
 
       if (message.uiDiff) {
         current.blocks = [
-          ...current.blocks.slice(0, index + 1),
+          ...current.blocks.slice(0, match + 1),
           {
             type: 'diff',
             id: `${tool.id}:diff`,
@@ -365,11 +403,13 @@ export function foldMessages(messages: ChatMessage[]): Fold {
             removed: message.uiDiff.removed,
             lines: message.uiDiff.lines,
           },
-          ...current.blocks.slice(index + 1),
+          ...current.blocks.slice(match + 1),
         ]
       }
     }
   }
+
+  insertBoundaries(messages.length)
 
   return { items, usage: null, toolStarts: {}, thinkingStarts: {} }
 }

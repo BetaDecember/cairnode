@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AgentStreamPayload,
+  ChatCompactInput,
   ChatSendInput,
   PermissionRespondInput,
   RecodeApi,
@@ -27,6 +28,7 @@ const api: RecodeApi = {
   chat: {
     send: (input: ChatSendInput) => ipcRenderer.invoke('chat:send', input),
     abort: (sessionId: string) => ipcRenderer.invoke('chat:abort', { sessionId }),
+    compact: (input: ChatCompactInput) => ipcRenderer.invoke('chat:compact', input),
     respond: (input: PermissionRespondInput) => ipcRenderer.invoke('permission:respond', input),
     onEvent: (callback: (payload: AgentStreamPayload) => void) => {
       const listener = (_event: unknown, payload: AgentStreamPayload): void => callback(payload)

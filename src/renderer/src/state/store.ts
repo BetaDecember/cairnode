@@ -48,6 +48,7 @@ interface AppState {
   cwd: string | null
   fold: Fold
   running: boolean
+  compacting: boolean
   sessionState: SessionState
   models: ModelInfo[]
   model: string
@@ -70,6 +71,7 @@ interface AppState {
 
   send(text: string): Promise<void>
   abort(): Promise<void>
+  compact(): Promise<void>
   respond(requestId: string, decision: PermissionDecision): Promise<void>
   handleEvent(payload: { sessionId: string; event: AgentEvent }): void
 }
@@ -99,6 +101,7 @@ export const useApp = create<AppState>((set, get) => ({
   cwd: null,
   fold: emptyFold(),
   running: false,
+  compacting: false,
   sessionState: 'idle',
   models: [],
   model: localStorage.getItem(MODEL_KEY) ?? FALLBACK_MODEL,
@@ -184,7 +187,13 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const meta = await window.api.sessions.create(get().cwd ?? undefined)
       resetIds()
-      set({ activeId: meta.id, fold: emptyFold(), running: false, sessionState: 'idle' })
+      set({
+        activeId: meta.id,
+        fold: emptyFold(),
+        running: false,
+        compacting: false,
+        sessionState: 'idle',
+      })
       await get().refreshSessions()
     } catch (error) {
       set({ notice: error instanceof Error ? error.message : String(error) })
@@ -203,6 +212,7 @@ export const useApp = create<AppState>((set, get) => ({
         activeId: meta.id,
         fold: emptyFold(),
         running: false,
+        compacting: false,
         sessionState: 'idle',
       })
       await get().refreshSessions()
@@ -220,8 +230,9 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       activeId: id,
       cwd: record.meta.cwd,
-      fold: foldMessages(record.messages),
+      fold: foldMessages(record.messages, record.compactions),
       running: false,
+      compacting: false,
       sessionState: 'idle',
     })
   },
@@ -273,6 +284,21 @@ export const useApp = create<AppState>((set, get) => ({
     const id = get().activeId
     if (!id) return
     await window.api.chat.abort(id)
+  },
+
+  async compact() {
+    const id = get().activeId
+    if (!id || get().running || get().compacting) return
+
+    set({ compacting: true })
+    try {
+      await window.api.chat.compact({ sessionId: id, model: get().model })
+      set({ notice: null })
+    } catch (error) {
+      set({ notice: error instanceof Error ? error.message : String(error) })
+    } finally {
+      set({ compacting: false })
+    }
   },
 
   async respond(requestId, decision) {

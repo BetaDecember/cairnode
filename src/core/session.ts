@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { SessionMeta } from './types.ts'
+import type { CompactionRecord, SessionMeta } from './types.ts'
 import type { ChatMessage } from './provider/types.ts'
+import { summaryMessage } from './agent/compact.ts'
 
 /**
  * Append-only JSONL session storage.
@@ -13,6 +14,10 @@ import type { ChatMessage } from './provider/types.ts'
  *
  *   {"type":"meta","id":"…","cwd":"…","createdAt":"…"}
  *   {"type":"message","at":"…","message":{…}}
+ *   {"type":"compaction","at":"…","summary":"…","task":"…","dropped":12}
+ *
+ * A compaction line is a boundary: the transcript still shows every message,
+ * but the model's history starts at the latest boundary.
  */
 
 interface MetaLine {
@@ -28,9 +33,21 @@ interface MessageLine {
   message: ChatMessage
 }
 
+interface CompactionLine {
+  type: 'compaction'
+  at: string
+  summary: string
+  task: string
+  dropped: number
+}
+
 export interface SessionRecord {
   meta: SessionMeta
+  /** Everything stored, oldest first, for the transcript. */
   messages: ChatMessage[]
+  /** What the model receives next: from the latest compaction, or all messages. */
+  history: ChatMessage[]
+  compactions: CompactionRecord[]
 }
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
@@ -121,6 +138,26 @@ function deriveMeta(
   }
 }
 
+/**
+ * Rebuild the model's view at the latest compaction boundary.
+ *
+ * The summary stands in for everything before the boundary. The active task is
+ * kept verbatim so the next turn continues the work instead of answering the
+ * summary. Display messages are deliberately untouched.
+ */
+export function historyFrom(
+  messages: ChatMessage[],
+  compactions: CompactionRecord[],
+): ChatMessage[] {
+  const last = compactions.at(-1)
+  if (!last) return messages
+
+  const history: ChatMessage[] = [summaryMessage(last.summary)]
+  if (last.task.trim()) history.push({ role: 'user', content: last.task })
+  history.push(...messages.slice(last.index))
+  return history
+}
+
 export class SessionStore {
   private readonly root: string
 
@@ -159,6 +196,16 @@ export class SessionStore {
     await fs.appendFile(this.filePath(id), `${body}\n`, 'utf8')
   }
 
+  /** Record a history rewrite. The transcript keeps every message before it. */
+  async appendCompaction(
+    id: string,
+    record: { at: string; summary: string; task: string; dropped: number },
+  ): Promise<void> {
+    const line: CompactionLine = { type: 'compaction', ...record }
+    await fs.mkdir(this.root, { recursive: true })
+    await fs.appendFile(this.filePath(id), `${JSON.stringify(line)}\n`, 'utf8')
+  }
+
   async load(id: string): Promise<SessionRecord | null> {
     // Validate before the try: an invalid id is a caller error, not a miss.
     const file = this.filePath(id)
@@ -172,15 +219,25 @@ export class SessionStore {
 
     let base: MetaLine | null = null
     const messages: ChatMessage[] = []
+    const compactions: CompactionRecord[] = []
     let lastAt: string | null = null
 
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue
       try {
-        const parsed = JSON.parse(line) as MetaLine | MessageLine
+        const parsed = JSON.parse(line) as MetaLine | MessageLine | CompactionLine
         if (parsed.type === 'meta') base = parsed
         else if (parsed.type === 'message' && parsed.message) {
           messages.push(parsed.message)
+          lastAt = parsed.at ?? lastAt
+        } else if (parsed.type === 'compaction' && parsed.summary) {
+          compactions.push({
+            at: parsed.at,
+            summary: parsed.summary,
+            task: parsed.task ?? '',
+            dropped: parsed.dropped ?? 0,
+            index: messages.length,
+          })
           lastAt = parsed.at ?? lastAt
         }
       } catch {
@@ -191,6 +248,10 @@ export class SessionStore {
 
     if (!base) return null
     const repaired = repairConversation(messages)
+    // A crash can only remove the final incomplete group, so a boundary past
+    // the repaired end belongs to that group and is not usable.
+    const usable = compactions.filter((compaction) => compaction.index <= repaired.length)
+
     return {
       meta: deriveMeta(
         { id: base.id, cwd: base.cwd, createdAt: base.createdAt },
@@ -198,6 +259,8 @@ export class SessionStore {
         lastAt,
       ),
       messages: repaired,
+      history: historyFrom(repaired, usable),
+      compactions: usable,
     }
   }
 

@@ -30,6 +30,14 @@ const SendInput = z
 
 const AbortInput = z.object({ sessionId: SessionId }).strict()
 
+const CompactInput = z
+  .object({
+    sessionId: SessionId,
+    model: z.string().min(1).max(200).optional(),
+    numCtx: z.number().int().min(2048).max(262_144).optional(),
+  })
+  .strict()
+
 const RespondInput = z
   .object({
     requestId: z.string().min(1).max(128),
@@ -101,6 +109,10 @@ export function registerIpc(): void {
   ipcMain.handle('chat:abort', async (_event, raw: unknown) => {
     host.abort(AbortInput.parse(raw).sessionId)
   })
+
+  ipcMain.handle('chat:compact', async (_event, raw: unknown) =>
+    host.compact(CompactInput.parse(raw)),
+  )
 
   ipcMain.handle('permission:respond', async (_event, raw: unknown) => {
     const input = RespondInput.parse(raw)

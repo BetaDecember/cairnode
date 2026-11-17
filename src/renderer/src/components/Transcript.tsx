@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TranscriptItem } from '../lib/transcript'
 import { shortPath } from '../lib/path'
 import { useApp } from '../state/store'
 import { BlockView } from './blocks'
-import { Folder, Sparkle } from './icons'
+import { ChevronDown, Folder, Sparkle } from './icons'
 
 /** Distance from the bottom that still counts as "following the stream". */
 const STICK_PX = 64
@@ -68,7 +68,9 @@ function Activity({ state }: { state: string }) {
       ? 'Thinking'
       : state === 'awaiting_permission'
         ? 'Waiting for permission'
-        : 'Working'
+        : state === 'compacting'
+          ? 'Compacting context'
+          : 'Working'
 
   return (
     <div className="flex items-center gap-2 pl-0.5 text-[11.5px] text-ink-faint">
@@ -90,13 +92,7 @@ function Item({ item }: { item: TranscriptItem }) {
   }
 
   if (item.kind === 'divider') {
-    return (
-      <div className="flex items-center gap-3 py-1">
-        <span className="h-px flex-1 bg-line" />
-        <span className="text-[10.5px] tracking-[0.02em] text-ink-faint">{item.label}</span>
-        <span className="h-px flex-1 bg-line" />
-      </div>
-    )
+    return <DividerItem item={item} />
   }
 
   if (item.blocks.length === 0) return null
@@ -108,6 +104,41 @@ function Item({ item }: { item: TranscriptItem }) {
         // Text and thinking blocks have no id of their own.
         <BlockView key={`${item.id}:${index}`} block={block} />
       ))}
+    </div>
+  )
+}
+
+function DividerItem({ item }: { item: Extract<TranscriptItem, { kind: 'divider' }> }) {
+  const [open, setOpen] = useState(false)
+  const interactive = Boolean(item.detail)
+
+  return (
+    <div className="py-1">
+      <button
+        type="button"
+        disabled={!interactive}
+        onClick={() => setOpen((value) => !value)}
+        title={interactive ? 'Show the summary' : undefined}
+        className="flex w-full items-center gap-3 disabled:cursor-default"
+      >
+        <span className="h-px flex-1 bg-line" />
+        <span className="flex items-center gap-1 text-[10.5px] tracking-[0.02em] text-ink-faint transition-colors hover:text-ink-muted">
+          {item.label}
+          {interactive && (
+            <ChevronDown
+              size={11}
+              className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
+            />
+          )}
+        </span>
+        <span className="h-px flex-1 bg-line" />
+      </button>
+
+      {open && item.detail && (
+        <div className="mx-auto mt-2 max-w-[85%] whitespace-pre-wrap rounded-control border border-line bg-panel-2/50 px-3 py-2 text-[11.5px] leading-[1.6] text-ink-muted">
+          {item.detail}
+        </div>
+      )}
     </div>
   )
 }

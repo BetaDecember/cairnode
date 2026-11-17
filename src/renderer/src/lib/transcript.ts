@@ -40,4 +40,4 @@ export type Block =
 export type TranscriptItem =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'assistant'; id: string; blocks: Block[] }
-  | { kind: 'divider'; id: string; label: string }
+  | { kind: 'divider'; id: string; label: string; detail?: string }

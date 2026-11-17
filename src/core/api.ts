@@ -1,4 +1,4 @@
-import type { AgentEvent, ModelInfo, PermissionMode, SessionMeta } from './types.ts'
+import type { AgentEvent, CompactionRecord, ModelInfo, PermissionMode, SessionMeta } from './types.ts'
 import type { ChatMessage } from './provider/types.ts'
 import type { PermissionDecision } from './agent/permission.ts'
 
@@ -21,6 +21,7 @@ export interface AppInfo {
 export interface SessionLoad {
   meta: SessionMeta
   messages: ChatMessage[]
+  compactions: CompactionRecord[]
 }
 
 export interface ChatSendInput {
@@ -30,6 +31,12 @@ export interface ChatSendInput {
   model?: string
   numCtx?: number
   think?: boolean
+}
+
+export interface ChatCompactInput {
+  sessionId: string
+  model?: string
+  numCtx?: number
 }
 
 export interface AgentStreamPayload {
@@ -54,6 +61,8 @@ export interface RecodeApi {
   chat: {
     send(input: ChatSendInput): Promise<{ started: boolean }>
     abort(sessionId: string): Promise<void>
+    /** Summarize the session history now, then keep going from that summary. */
+    compact(input: ChatCompactInput): Promise<{ compacted: boolean }>
     respond(input: PermissionRespondInput): Promise<boolean>
     /** Returns an unsubscribe function. */
     onEvent(callback: (payload: AgentStreamPayload) => void): () => void

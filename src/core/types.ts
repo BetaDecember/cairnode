@@ -53,6 +53,8 @@ export interface Usage {
   contextPct: number
   /** True when the numbers came from an estimator rather than the provider. */
   estimated: boolean
+  /** Prompt tokens served from the KV cache. Zero on a cold prefix. */
+  cachedTokens: number
 }
 
 /** The single event stream that drives the UI. */
@@ -63,6 +65,14 @@ export type AgentEvent =
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_progress'; id: string; chunk: string }
   | { type: 'tool_result'; id: string; ok: boolean; content: ContentBlock[] }
+  | {
+      type: 'tool_diff'
+      id: string
+      path: string
+      added: number
+      removed: number
+      lines: string[]
+    }
   | {
       type: 'permission_request'
       id: string
@@ -99,4 +109,7 @@ export interface SessionMeta {
   cwd: string
   createdAt: string
   updatedAt: string
+  /** First line of the last assistant reply, for the sidebar. */
+  preview: string
+  messageCount: number
 }

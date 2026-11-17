@@ -22,6 +22,7 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/core/**/*.ts",
+    "scripts/**/*.ts",
     "electron.vite.config.ts"
   ]
 }

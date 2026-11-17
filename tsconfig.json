@@ -20,6 +20,5 @@
       "@core/*": ["./src/core/*"]
     }
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/core/**/*.ts"],
-  "exclude": ["src/core/**/*.test.ts"]
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx"]
 }

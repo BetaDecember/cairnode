@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.json --noEmit",
-    "test": "node --test \"src/core/**/*.test.ts\""
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/core/**/*.test.ts\"",
+    "agent": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/try-agent.ts"
   },
   "dependencies": {
     "diff2html": "^3.4.52",

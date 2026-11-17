@@ -1,22 +1,45 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type {
+  AgentStreamPayload,
+  ChatSendInput,
+  PermissionRespondInput,
+  RecodeApi,
+} from '../core/api'
 
-export interface AppInfo {
-  version: string
-  platform: string
-  arch: string
-  electron: string
-  node: string
-  isDev: boolean
+/**
+ * The only surface the renderer gets. Keep this small and auditable.
+ *
+ * Nothing here takes a path or a command directly — the renderer names
+ * operations, and main validates and performs them.
+ */
+const api: RecodeApi = {
+  info: () => ipcRenderer.invoke('app:info'),
+
+  models: () => ipcRenderer.invoke('models:list'),
+
+  sessions: {
+    list: () => ipcRenderer.invoke('session:list'),
+    create: (cwd?: string) => ipcRenderer.invoke('session:create', cwd ? { cwd } : {}),
+    load: (id: string) => ipcRenderer.invoke('session:load', { id }),
+    remove: (id: string) => ipcRenderer.invoke('session:delete', { id }),
+  },
+
+  chat: {
+    send: (input: ChatSendInput) => ipcRenderer.invoke('chat:send', input),
+    abort: (sessionId: string) => ipcRenderer.invoke('chat:abort', { sessionId }),
+    respond: (input: PermissionRespondInput) => ipcRenderer.invoke('permission:respond', input),
+    onEvent: (callback: (payload: AgentStreamPayload) => void) => {
+      const listener = (_event: unknown, payload: AgentStreamPayload): void => callback(payload)
+      ipcRenderer.on('agent:event', listener)
+      return () => {
+        ipcRenderer.removeListener('agent:event', listener)
+      }
+    },
+  },
+
+  workspace: {
+    pick: () => ipcRenderer.invoke('workspace:pick'),
+  },
 }
-
-/** The only surface the renderer gets. Keep this small and auditable. */
-const api = {
-  ping: (nonce: string): Promise<{ ok: boolean; nonce: string; now: number }> =>
-    ipcRenderer.invoke('system:ping', { nonce }),
-
-  info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
-}
-
-export type RecodeApi = typeof api
 
 contextBridge.exposeInMainWorld('api', api)

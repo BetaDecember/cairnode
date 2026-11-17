@@ -40,8 +40,17 @@ function assertId(id: string): void {
   if (!ID_PATTERN.test(id)) throw new Error(`Invalid session id: ${id}`)
 }
 
+/** One-line text for the sidebar: no markdown markers, no runs of whitespace. */
+function cleanLine(text: string): string {
+  return text
+    .replace(/`/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function titleFromText(text: string): string {
-  const clean = text.replace(/\s+/g, ' ').trim()
+  const clean = cleanLine(text)
   if (!clean) return 'New session'
   return clean.length > 64 ? `${clean.slice(0, 61)}…` : clean
 }
@@ -89,10 +98,10 @@ function previewFromMessages(messages: ChatMessage[]): string {
     if (message?.role !== 'assistant') continue
     const firstLine = message.content.split('\n').find((line) => line.trim())
     if (!firstLine) continue
-    const clean = firstLine.replace(/\s+/g, ' ').trim()
+    const clean = cleanLine(firstLine)
     return clean.length > 96 ? `${clean.slice(0, 93)}…` : clean
   }
-  return messages.length === 0 ? 'Empty' : `${messages.length} messages`
+  return messages.length === 0 ? 'No messages yet' : `${messages.length} messages`
 }
 
 function deriveMeta(

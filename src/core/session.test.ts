@@ -16,6 +16,10 @@ describe('titleFromText', () => {
     assert.equal(titleFromText('x'.repeat(100)).length, 62)
     assert.equal(titleFromText('   '), 'New session')
   })
+
+  it('drops inline markdown markers', () => {
+    assert.equal(titleFromText('Use `add` and **not** `subtract`'), 'Use add and not subtract')
+  })
 })
 
 describe('SessionStore', () => {

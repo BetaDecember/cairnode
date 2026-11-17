@@ -177,6 +177,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
                   event.promptTokens + event.outputTokens,
                   options.numCtx,
                 ),
+                contextWindow: options.numCtx,
                 estimated: false,
                 cachedTokens: event.cachedTokens,
               },
@@ -237,7 +238,13 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           risk: tool.risk,
         }
 
-        yield { type: 'tool_use', id: call.id, name: call.name, input: call.input }
+        yield {
+          type: 'tool_use',
+          id: call.id,
+          name: call.name,
+          input: call.input,
+          summary: request.summary,
+        }
 
         if (broker.requiresApproval(request)) {
           yield { type: 'session_state', state: 'awaiting_permission' }

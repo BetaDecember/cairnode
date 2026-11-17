@@ -49,8 +49,10 @@ export interface TodoItem {
 export interface Usage {
   promptTokens: number
   outputTokens: number
-  /** 0..1 of the model's context window. */
+  /** 0..1 of the effective context window, which is `numCtx`, not the model's max. */
   contextPct: number
+  /** The context window the run is actually using. */
+  contextWindow: number
   /** True when the numbers came from an estimator rather than the provider. */
   estimated: boolean
   /** Prompt tokens served from the KV cache. Zero on a cold prefix. */
@@ -62,7 +64,7 @@ export type AgentEvent =
   | { type: 'session_state'; state: SessionState }
   | { type: 'thinking_delta'; text: string; source: 'native' | 'narrated' }
   | { type: 'text_delta'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_use'; id: string; name: string; input: unknown; summary: string }
   | { type: 'tool_progress'; id: string; chunk: string }
   | { type: 'tool_result'; id: string; ok: boolean; content: ContentBlock[] }
   | {

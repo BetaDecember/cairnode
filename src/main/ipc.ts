@@ -78,9 +78,15 @@ export function registerIpc(): void {
     return meta
   })
 
-  ipcMain.handle('session:load', async (_event, raw: unknown) =>
-    store.load(SessionIdInput.parse(raw).id),
-  )
+  ipcMain.handle('session:load', async (_event, raw: unknown) => {
+    const record = await store.load(SessionIdInput.parse(raw).id)
+    if (record) {
+      // The folder was approved when this session was created, so restoring it
+      // re-approves the same project for new sessions and the agent's tools.
+      approvedRoots.add(record.meta.cwd)
+    }
+    return record
+  })
 
   ipcMain.handle('session:delete', async (_event, raw: unknown) => {
     const { id } = SessionIdInput.parse(raw)

@@ -12,6 +12,11 @@ const MODE_LABEL: Record<string, string> = {
   bypass: 'bypass',
 }
 
+const COMMANDS = [
+  { name: '/clear', description: 'Start a fresh session in this project' },
+  { name: '/compact', description: 'Summarize earlier turns to free context' },
+] as const
+
 export function Composer() {
   const [value, setValue] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -28,10 +33,15 @@ export function Composer() {
   const usage = useApp((state) => state.fold.usage)
   const compacting = useApp((state) => state.compacting)
   const compact = useApp((state) => state.compact)
+  const newSession = useApp((state) => state.newSession)
   const memory = useApp((state) => state.memory)
   const notify = useApp((state) => state.notify)
 
   const gated = Boolean(memory && memory.files.length > 0 && memory.trust !== 'trusted')
+  const slash = value.trimStart().startsWith('/') ? value.trim().toLowerCase() : ''
+  const matches = slash
+    ? COMMANDS.filter((command) => command.name.startsWith(slash))
+    : []
 
   // Auto-grow up to ~9 lines, then scroll.
   useEffect(() => {
@@ -41,9 +51,29 @@ export function Composer() {
     element.style.height = `${Math.min(element.scrollHeight, 200)}px`
   }, [value])
 
+  const runCommand = (command: string) => {
+    setValue('')
+    if (command === '/clear') void newSession()
+    if (command === '/compact') void compact()
+  }
+
   const submit = () => {
     const text = value.trim()
     if (!text || running || compacting) return
+
+    // Only these two commands exist, and both are local actions: a slash path
+    // that is not a command is still a normal message.
+    if (slash === '/clear' || slash === '/compact') {
+      runCommand(slash)
+      return
+    }
+    const only = matches.length === 1 ? matches[0] : undefined
+    if (only && !slash.includes(' ')) {
+      runCommand(only.name)
+      return
+    }
+    if (slash === '/') return
+
     if (gated) {
       notify('Review and trust the project instructions before running the agent.')
       return
@@ -104,6 +134,22 @@ export function Composer() {
             }
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-[1.55] text-ink outline-none placeholder:text-ink-faint"
           />
+
+          {matches.length > 0 && !running && (
+            <div className="flex flex-wrap gap-1 px-2.5 pb-0.5">
+              {matches.map((command) => (
+                <button
+                  key={command.name}
+                  type="button"
+                  onClick={() => runCommand(command.name)}
+                  className="flex items-baseline gap-1.5 rounded-control border border-line bg-canvas px-2 py-[2px] text-left transition-colors hover:border-line-strong"
+                >
+                  <span className="font-mono text-[11px] text-ink">{command.name}</span>
+                  <span className="text-[10.5px] text-ink-faint">{command.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 px-2 pb-2">
             <label className="sr-only" htmlFor="model-picker">

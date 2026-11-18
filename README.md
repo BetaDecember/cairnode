@@ -47,6 +47,19 @@ every run. Chat Completions has no portable context setting, so for OpenAI-compa
 endpoints the value is the budget the context meter and compaction use — set it to match
 the server's actual window.
 
+## Composer
+
+Two commands are handled locally instead of being sent to the model:
+
+- `/clear` starts a new session in the same project and leaves the previous one in the
+  sidebar, so the old transcript is still there to reopen.
+- `/compact` summarizes earlier turns now. The **Compact** button next to the context
+  meter does the same thing.
+
+Typing a command prefix shows a hint row above the composer; click a hint or press Enter
+to run it. Any other text beginning with `/`, such as an absolute path, is a normal
+message.
+
 ## Sessions and crashes
 
 Sessions are append-only JSONL under `~/Library/Application Support/recode/sessions`. If

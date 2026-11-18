@@ -56,6 +56,11 @@ export interface PermissionRespondInput {
   decision: PermissionDecision
 }
 
+export interface DiagnosticsExport {
+  /** Where the user chose to save the redacted report. */
+  path: string
+}
+
 export interface RecodeApi {
   info(): Promise<AppInfo>
   models(): Promise<ModelInfo[]>
@@ -81,5 +86,9 @@ export interface RecodeApi {
   }
   workspace: {
     pick(): Promise<string | null>
+  }
+  diagnostics: {
+    /** Ask for a destination, then write the redacted support bundle. */
+    export(): Promise<DiagnosticsExport | null>
   }
 }

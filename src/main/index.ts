@@ -30,7 +30,7 @@ function createWindow(agentHost: Host): BrowserWindow {
   win.on('ready-to-show', () => win.show())
 
   // A detached Bash group must not outlive the window that started it.
-  win.on('closed', () => agentHost.abortAll())
+  win.on('closed', () => agentHost.abortAll('window_closed'))
 
   // Never let the app navigate itself away from the local renderer.
   win.webContents.on('will-navigate', (event, url) => {
@@ -58,7 +58,7 @@ void app.whenReady().then(() => {
 
   // A suspended machine stops network reads; end the turn instead of letting
   // it look alive until the socket eventually times out.
-  powerMonitor.on('suspend', () => host?.abortAll())
+  powerMonitor.on('suspend', () => host?.abortAll('suspend'))
 
   createWindow(host)
 
@@ -67,7 +67,7 @@ void app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => host?.abortAll())
+app.on('before-quit', () => host?.abortAll('quit'))
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

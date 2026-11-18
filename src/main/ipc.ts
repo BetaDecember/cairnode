@@ -1,9 +1,11 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { DiagnosticsLog } from '../core/diagnostics.ts'
 import { SessionStore } from '../core/session.ts'
 import { MAX_NUM_CTX, MIN_NUM_CTX } from '../core/settings.ts'
 import { AgentHost } from './agent-host'
+import { writeDiagnosticsReport } from './diagnostics'
 import { listModels, invalidateModels } from './models'
 import { SettingsStore } from './settings'
 
@@ -89,7 +91,8 @@ const RespondInput = z
 export function registerIpc(): AgentHost {
   const store = new SessionStore(join(app.getPath('userData'), 'sessions'))
   const settings = new SettingsStore()
-  const host = new AgentHost(store, settings)
+  const diagnostics = new DiagnosticsLog()
+  const host = new AgentHost(store, settings, diagnostics)
 
   /**
    * A session may only point at a directory the user has actually chosen.
@@ -192,6 +195,33 @@ export function registerIpc(): AgentHost {
     approvedRoots.add(picked)
     lastCwd = picked
     return picked
+  })
+
+  ipcMain.handle('diagnostics:export', async (event) => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const options = {
+      title: 'Export diagnostics',
+      buttonLabel: 'Export',
+      defaultPath: join(app.getPath('downloads'), `recode-diagnostics-${stamp}.json`),
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    }
+    // Attach the sheet to the window that asked for it; an app-modal panel
+    // would sit behind the settings dialog.
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const result = parent
+      ? await dialog.showSaveDialog(parent, options)
+      : await dialog.showSaveDialog(options)
+
+    if (result.canceled || !result.filePath) return null
+
+    await writeDiagnosticsReport({
+      file: result.filePath,
+      store,
+      settings,
+      host,
+      events: diagnostics.snapshot(),
+    })
+    return { path: result.filePath }
   })
 
   return host

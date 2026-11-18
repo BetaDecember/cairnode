@@ -71,15 +71,17 @@ function Dialog({
   const [draft, setDraft] = useState<Draft>(() => toDraft(settings))
   const [clearKey, setClearKey] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose()
+      if (event.key === 'Escape' && !saving && !exporting) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, saving])
+  }, [onClose, saving, exporting])
 
   const set = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }))
 
@@ -125,13 +127,27 @@ function Dialog({
     }
   }
 
+  const exportDiagnostics = async () => {
+    setError(null)
+    setStatus(null)
+    setExporting(true)
+    try {
+      const result = await window.api.diagnostics.export()
+      if (result) setStatus(`Saved to ${result.path}`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const keyStored = settings.openai.apiKeySet && !clearKey
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-6"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !saving) onClose()
+        if (event.target === event.currentTarget && !saving && !exporting) onClose()
       }}
     >
       <div
@@ -283,10 +299,26 @@ function Dialog({
           )}
 
           <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-line bg-panel px-5 py-3">
+            <div className="mr-auto flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void exportDiagnostics()}
+                disabled={saving || exporting}
+                title="Save a redacted support bundle"
+                className="shrink-0 rounded-control border border-line px-3 py-1.5 text-[12px] text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
+              >
+                {exporting ? 'Exporting…' : 'Export diagnostics'}
+              </button>
+              {status && (
+                <span className="max-w-[220px] truncate text-[10.5px] text-ink-faint" title={status}>
+                  {status}
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={onClose}
-              disabled={saving}
+              disabled={saving || exporting}
               className="rounded-control border border-line px-3 py-1.5 text-[12px] text-ink-muted transition-colors hover:border-line-strong hover:text-ink disabled:opacity-50"
             >
               Cancel

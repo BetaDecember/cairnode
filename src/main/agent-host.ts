@@ -8,6 +8,7 @@ import type { ProviderId } from '../core/settings.ts'
 import type { PermissionDecision, PermissionRequest } from '../core/agent/permission.ts'
 import type { AgentEvent } from '../core/types.ts'
 import type { ChatCompactInput, ChatSendInput } from '../core/api.ts'
+import type { DiagnosticsLog } from '../core/diagnostics.ts'
 import type { ChatMessage, Provider, ToolSchema } from '../core/provider/types.ts'
 import type { SessionStore, SessionRecord } from '../core/session.ts'
 import { providerFor, numCtxFor } from './providers.ts'
@@ -57,10 +58,16 @@ export class AgentHost {
   private readonly runs = new Map<string, Run>()
   private readonly compacting = new Map<string, AbortController>()
   private readonly pending = new Map<string, PendingPermission>()
+  private readonly diagnostics: DiagnosticsLog | null
 
-  constructor(store: SessionStore, settings: SettingsStore) {
+  constructor(
+    store: SessionStore,
+    settings: SettingsStore,
+    diagnostics: DiagnosticsLog | null = null,
+  ) {
     this.store = store
     this.settings = settings
+    this.diagnostics = diagnostics
   }
 
   async send(input: ChatSendInput): Promise<{ started: boolean }> {
@@ -100,6 +107,11 @@ export class AgentHost {
       return { started: true }
     } catch (error) {
       this.runs.delete(sessionId)
+      this.diagnostics?.record({
+        kind: 'send_failed',
+        sessionId,
+        detail: error instanceof Error ? error.message : String(error),
+      })
       throw error
     }
   }
@@ -171,6 +183,11 @@ export class AgentHost {
     } catch (error) {
       // A session deleted while summarizing must not come back with a summary.
       if (controller.signal.aborted) return { compacted: false }
+      this.diagnostics?.record({
+        kind: 'compaction_failed',
+        sessionId,
+        detail: error instanceof Error ? error.message : String(error),
+      })
       throw error
     } finally {
       this.compacting.delete(sessionId)
@@ -203,12 +220,18 @@ export class AgentHost {
     return this.runs.has(sessionId)
   }
 
+  /** Whether this process is summarizing the session right now. */
+  isCompacting(sessionId: string): boolean {
+    return this.compacting.has(sessionId)
+  }
+
   /**
    * Stop every run and summary in flight. Each abort releases pending
    * permission prompts and lets a running Bash tool kill its process group
    * before the window or app goes away.
    */
-  abortAll(): void {
+  abortAll(reason: 'window_closed' | 'quit' | 'suspend'): void {
+    this.diagnostics?.record({ kind: 'abort_all', reason })
     for (const sessionId of [...this.runs.keys(), ...this.compacting.keys()]) {
       this.abort(sessionId)
     }
@@ -305,6 +328,18 @@ export class AgentHost {
   }
 
   private emit(sessionId: string, event: AgentEvent): void {
+    if (event.type === 'error') {
+      this.diagnostics?.record({
+        kind: 'error',
+        sessionId,
+        errorClass: event.errorClass,
+        retryable: event.retryable,
+        detail: event.detail,
+      })
+    } else if (event.type === 'done') {
+      this.diagnostics?.record({ kind: 'done', sessionId, stopReason: event.stopReason })
+    }
+
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('agent:event', { sessionId, event })
     }

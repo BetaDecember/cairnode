@@ -48,6 +48,10 @@ const api: RecodeApi = {
   workspace: {
     pick: () => ipcRenderer.invoke('workspace:pick'),
   },
+
+  diagnostics: {
+    export: () => ipcRenderer.invoke('diagnostics:export'),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

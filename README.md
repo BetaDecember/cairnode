@@ -8,8 +8,8 @@ Built because the good agentic desktop apps assume a cloud model, and the good l
 models assume a terminal.
 
 > **Status:** early but usable. The agent loop, seven tools, permissions, sessions,
-> context compaction, both provider adapters, and crash recovery are in place.
-> Keyboard shortcuts and packaging are next.
+> context compaction, both provider adapters, crash recovery, keyboard shortcuts, and
+> diagnostics export are in place. Distribution is source-only.
 
 ## Requirements
 
@@ -52,6 +52,15 @@ Sessions are append-only JSONL under `~/Library/Application Support/recode/sessi
 the app stops mid-turn, the session still loads: a tool call whose result never arrived is
 dropped so the conversation stays valid, and the composer shows that the last turn did not
 finish. Nothing runs automatically. The next message continues from the stored history.
+
+## Diagnostics
+
+Settings → **Export diagnostics** writes a JSON support bundle. There is no telemetry;
+nothing is sent anywhere, and the file is only created when you ask for it. It contains
+app and machine versions, endpoint configuration with credentials and query strings
+removed, per-session message counts, and the most recent run lifecycle events. It does not
+contain your prompts, tool output, or API keys; error messages may mention endpoints and
+short provider responses. Project paths are shortened before they are written.
 
 ## Keyboard
 

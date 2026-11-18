@@ -69,6 +69,13 @@ export const Sun = (p: IconProps) => (
   </Icon>
 )
 
+export const Gear = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 1.9 9.2 3l1.6-.2.7 1.5 1.5.7-.2 1.6L14 8l-1.1 1.2.2 1.6-1.5.7-.7 1.5-1.6-.2L8 14.1 6.8 13l-1.6.2-.7-1.5-1.5-.7.2-1.6L2.1 8l1.1-1.2-.2-1.6 1.5-.7.7-1.5 1.6.2L8 1.9Z" />
+    <circle cx="8" cy="8" r="2.1" />
+  </Icon>
+)
+
 export const Moon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13 9.6A5.6 5.6 0 0 1 6.4 3a5.6 5.6 0 1 0 6.6 6.6Z" />

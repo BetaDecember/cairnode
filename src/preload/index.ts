@@ -6,6 +6,7 @@ import type {
   PermissionRespondInput,
   RecodeApi,
 } from '../core/api'
+import type { SettingsPatch } from '../core/settings'
 
 /**
  * The only surface the renderer gets. Keep this small and auditable.
@@ -17,6 +18,11 @@ const api: RecodeApi = {
   info: () => ipcRenderer.invoke('app:info'),
 
   models: () => ipcRenderer.invoke('models:list'),
+
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    save: (patch: SettingsPatch) => ipcRenderer.invoke('settings:save', patch),
+  },
 
   sessions: {
     list: () => ipcRenderer.invoke('session:list'),

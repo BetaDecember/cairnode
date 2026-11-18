@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Composer } from './components/Composer'
 import { Gallery } from './components/Gallery'
+import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import { Transcript } from './components/Transcript'
@@ -20,6 +21,7 @@ export default function App() {
   const cwd = useApp((state) => state.cwd)
   const notice = useApp((state) => state.notice)
   const dismissNotice = useApp((state) => state.dismissNotice)
+  const openSettings = useApp((state) => state.openSettings)
 
   useEffect(() => {
     void boot()
@@ -34,6 +36,7 @@ export default function App() {
         view={view}
         onToggleTheme={toggleTheme}
         onToggleView={() => setView(view === 'app' ? 'gallery' : 'app')}
+        onOpenSettings={() => void openSettings()}
       />
 
       {notice && (
@@ -63,6 +66,8 @@ export default function App() {
           )}
         </main>
       </div>
+
+      <SettingsDialog />
     </div>
   )
 }

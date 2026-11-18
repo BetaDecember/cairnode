@@ -17,6 +17,8 @@ export interface ChatMessage {
   content: string
   thinking?: string
   toolName?: string
+  /** The id of the assistant call this tool result answers (OpenAI format). */
+  toolCallId?: string
   /** Present on assistant turns that requested tools; must be echoed back. */
   toolCalls?: ToolCallRecord[]
   /** Tool-result status, for transcript restore. Providers ignore it. */

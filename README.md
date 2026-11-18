@@ -7,15 +7,17 @@ tool cards, diffs, and permission prompts.
 Built because the good agentic desktop apps assume a cloud model, and the good local
 models assume a terminal.
 
-> **Status:** early. The interface shell and design system are in place; the agent loop
-> lands next. Not yet usable for real work.
+> **Status:** early but usable. The agent loop, seven tools, permissions, sessions,
+> context compaction, and both provider adapters are in place. Crash recovery, keyboard
+> shortcuts, and packaging are next.
 
 ## Requirements
 
 - macOS
 - Node 24+
 - [pnpm](https://pnpm.io) 11+
-- [Ollama](https://ollama.com) running locally, with at least one tool-capable model
+- [Ollama](https://ollama.com) running locally with a tool-capable model, or an
+  OpenAI-compatible endpoint such as LM Studio, llama.cpp, vLLM, or OpenRouter
 
 ## Run it
 
@@ -28,6 +30,21 @@ node node_modules/electron/install.js
 
 pnpm dev
 ```
+
+## Models and providers
+
+The model picker groups models by provider.
+
+- **Ollama** — the native API at `http://127.0.0.1:11434` by default. Models are
+  discovered and probed for tool support.
+- **OpenAI-compatible** — enable it in Settings (gear, top right), set the base URL
+  **including** `/v1`, and list the model ids to offer. An API key is optional; when set,
+  it is encrypted with the OS keychain and never reaches the renderer.
+
+Each provider has its own context window. For Ollama that number is sent as `num_ctx` on
+every run. Chat Completions has no portable context setting, so for OpenAI-compatible
+endpoints the value is the budget the context meter and compaction use — set it to match
+the server's actual window.
 
 ## Scripts
 

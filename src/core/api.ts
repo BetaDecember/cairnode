@@ -1,4 +1,5 @@
 import type { AgentEvent, CompactionRecord, ModelInfo, PermissionMode, SessionMeta } from './types.ts'
+import type { ProviderId, Settings, SettingsPatch } from './settings.ts'
 import type { ChatMessage } from './provider/types.ts'
 import type { PermissionDecision } from './agent/permission.ts'
 
@@ -28,6 +29,7 @@ export interface ChatSendInput {
   sessionId: string
   text: string
   mode?: PermissionMode
+  providerId?: ProviderId
   model?: string
   numCtx?: number
   think?: boolean
@@ -35,6 +37,7 @@ export interface ChatSendInput {
 
 export interface ChatCompactInput {
   sessionId: string
+  providerId?: ProviderId
   model?: string
   numCtx?: number
 }
@@ -52,6 +55,11 @@ export interface PermissionRespondInput {
 export interface RecodeApi {
   info(): Promise<AppInfo>
   models(): Promise<ModelInfo[]>
+  settings: {
+    get(): Promise<Settings>
+    /** Persist a patch; returns the redacted settings the renderer may show. */
+    save(patch: SettingsPatch): Promise<Settings>
+  }
   sessions: {
     list(): Promise<SessionMeta[]>
     create(cwd?: string): Promise<SessionMeta>

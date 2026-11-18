@@ -4,12 +4,14 @@ import { compactConversation } from '../core/agent/compact.ts'
 import { buildSystemPrompt } from '../core/agent/prompt.ts'
 import { estimateMessagesTokens } from '../core/tokens.ts'
 import { builtinTools } from '../core/tools/builtin.ts'
-import { OllamaProvider } from '../core/provider/ollama.ts'
+import type { ProviderId } from '../core/settings.ts'
 import type { PermissionDecision, PermissionRequest } from '../core/agent/permission.ts'
 import type { AgentEvent } from '../core/types.ts'
 import type { ChatCompactInput, ChatSendInput } from '../core/api.ts'
-import type { ChatMessage, ToolSchema } from '../core/provider/types.ts'
+import type { ChatMessage, Provider, ToolSchema } from '../core/provider/types.ts'
 import type { SessionStore, SessionRecord } from '../core/session.ts'
+import { providerFor, numCtxFor } from './providers.ts'
+import type { SettingsStore } from './settings.ts'
 
 /**
  * Owns in-flight agent runs and the permission round-trip.
@@ -20,12 +22,20 @@ import type { SessionStore, SessionRecord } from '../core/session.ts'
  */
 
 const DEFAULT_MODEL = 'qwen3.5:4b'
-const DEFAULT_NUM_CTX = 8192
+const DEFAULT_PROVIDER: ProviderId = 'ollama'
 /** A prompt nobody answers should not pin a run forever. */
 const PERMISSION_TIMEOUT_MS = 5 * 60_000
 
 interface Run {
   controller: AbortController
+}
+
+/** Everything a run needs resolved from settings before the user message lands. */
+interface Target {
+  providerId: ProviderId
+  provider: Provider
+  model: string
+  numCtx: number
 }
 
 interface PendingPermission {
@@ -43,12 +53,14 @@ function toolSchemas(): ToolSchema[] {
 
 export class AgentHost {
   private readonly store: SessionStore
+  private readonly settings: SettingsStore
   private readonly runs = new Map<string, Run>()
   private readonly compacting = new Set<string>()
   private readonly pending = new Map<string, PendingPermission>()
 
-  constructor(store: SessionStore) {
+  constructor(store: SessionStore, settings: SettingsStore) {
     this.store = store
+    this.settings = settings
   }
 
   async send(input: ChatSendInput): Promise<{ started: boolean }> {
@@ -62,6 +74,10 @@ export class AgentHost {
     const text = input.text.trim()
     if (!text) throw new Error('Message is empty.')
 
+    // Resolve first: a disabled or misconfigured provider should fail before a
+    // user message is persisted into a session that cannot answer.
+    const target = await this.resolve(input)
+
     const record = await this.store.load(input.sessionId)
     if (!record) throw new Error('No such session.')
 
@@ -72,7 +88,7 @@ export class AgentHost {
     const controller = new AbortController()
     this.runs.set(input.sessionId, { controller })
 
-    void this.execute(input, record, controller).finally(() => {
+    void this.execute(input, target, record, controller).finally(() => {
       this.runs.delete(input.sessionId)
     })
 
@@ -88,6 +104,7 @@ export class AgentHost {
       throw new Error('Stop the run before compacting this session.')
     }
 
+    const target = await this.resolve(input)
     const record = await this.store.load(input.sessionId)
     if (!record) throw new Error('No such session.')
     if (record.history.length === 0) throw new Error('This session has nothing to compact yet.')
@@ -95,9 +112,9 @@ export class AgentHost {
     this.compacting.add(input.sessionId)
     try {
       const result = await compactConversation(record.history, {
-        provider: new OllamaProvider(),
-        model: input.model ?? DEFAULT_MODEL,
-        numCtx: input.numCtx ?? DEFAULT_NUM_CTX,
+        provider: target.provider,
+        model: target.model,
+        numCtx: target.numCtx,
         tools: toolSchemas(),
       })
 
@@ -116,7 +133,6 @@ export class AgentHost {
 
       // The live meter should drop immediately; the next real turn replaces
       // this with provider-reported counts.
-      const numCtx = input.numCtx ?? DEFAULT_NUM_CTX
       const estimated = estimateMessagesTokens(
         [{ role: 'system', content: buildSystemPrompt() }, ...result.messages].map((message) => ({
           role: message.role,
@@ -128,8 +144,8 @@ export class AgentHost {
         usage: {
           promptTokens: estimated,
           outputTokens: 0,
-          contextPct: Math.min(1, estimated / numCtx),
-          contextWindow: numCtx,
+          contextPct: Math.min(1, estimated / target.numCtx),
+          contextWindow: target.numCtx,
           estimated: true,
           cachedTokens: 0,
         },
@@ -161,8 +177,33 @@ export class AgentHost {
     return true
   }
 
+  /**
+   * Resolve the provider, model, and window from settings before a run starts.
+   * Overrides from the composer win, but the provider itself must be enabled.
+   */
+  private async resolve(input: {
+    providerId?: ProviderId
+    model?: string
+    numCtx?: number
+  }): Promise<Target> {
+    const providerId = input.providerId ?? DEFAULT_PROVIDER
+    const settings = await this.settings.internal()
+    const provider = providerFor(settings, providerId)
+    const model = input.model?.trim() || (providerId === 'ollama' ? DEFAULT_MODEL : '')
+
+    if (!model) throw new Error('Choose a model in the composer before running.')
+
+    return {
+      providerId,
+      provider,
+      model,
+      numCtx: input.numCtx ?? numCtxFor(settings, providerId),
+    }
+  }
+
   private async execute(
     input: ChatSendInput,
+    target: Target,
     record: SessionRecord,
     controller: AbortController,
   ): Promise<void> {
@@ -170,9 +211,10 @@ export class AgentHost {
 
     try {
       for await (const event of runAgent({
-        model: input.model ?? DEFAULT_MODEL,
+        provider: target.provider,
+        model: target.model,
         cwd: record.meta.cwd,
-        numCtx: input.numCtx ?? DEFAULT_NUM_CTX,
+        numCtx: target.numCtx,
         think: input.think ?? true,
         mode: input.mode ?? 'default',
         conversation: record.history,

@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ProviderId } from '@core/settings'
 import { cn } from '../lib/cn'
+import { providerLabel } from '../lib/providers'
 import { useApp } from '../state/store'
 import { ArrowUp, Stop } from './icons'
 
@@ -18,6 +20,7 @@ export function Composer() {
   const send = useApp((state) => state.send)
   const abort = useApp((state) => state.abort)
   const models = useApp((state) => state.models)
+  const provider = useApp((state) => state.provider)
   const model = useApp((state) => state.model)
   const setModel = useApp((state) => state.setModel)
   const mode = useApp((state) => state.mode)
@@ -41,8 +44,27 @@ export function Composer() {
     void send(text)
   }
 
-  const selected = models.find((candidate) => candidate.id === model)
+  const groups = useMemo(() => {
+    const byProvider = new Map<string, typeof models>()
+    for (const candidate of models) {
+      const list = byProvider.get(candidate.providerId) ?? []
+      list.push(candidate)
+      byProvider.set(candidate.providerId, list)
+    }
+    return [...byProvider.entries()]
+  }, [models])
+
+  const selected = models.find(
+    (candidate) => candidate.providerId === provider && candidate.id === model,
+  )
   const modelWindow = selected?.contextWindow ?? 8192
+  const selection = `${provider}::${model}`
+
+  const chooseModel = (value: string) => {
+    const at = value.indexOf('::')
+    if (at < 0) return
+    setModel(value.slice(0, at) as ProviderId, value.slice(at + 2))
+  }
 
   return (
     <div className="shrink-0 px-6 pb-3">
@@ -75,17 +97,24 @@ export function Composer() {
             </label>
             <select
               id="model-picker"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
+              value={selection}
+              onChange={(event) => chooseModel(event.target.value)}
               disabled={running}
               className="max-w-[180px] cursor-pointer appearance-none truncate rounded-full border border-line bg-canvas px-2 py-[2px] text-[11px] text-ink-muted outline-none transition-colors hover:border-line-strong hover:text-ink disabled:opacity-60"
             >
-              {models.length === 0 && <option value={model}>{model}</option>}
-              {models.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.label}
-                  {candidate.capabilities.nativeTools ? '' : ' · no tools'}
-                </option>
+              {!selected && <option value={selection}>{model}</option>}
+              {groups.map(([providerId, list]) => (
+                <optgroup key={providerId} label={providerLabel(providerId)}>
+                  {list.map((candidate) => (
+                    <option
+                      key={`${providerId}::${candidate.id}`}
+                      value={`${providerId}::${candidate.id}`}
+                    >
+                      {candidate.label}
+                      {candidate.capabilities.nativeTools ? '' : ' · no tools'}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
 
@@ -125,6 +154,7 @@ export function Composer() {
         <UsageLine
           usage={usage}
           modelWindow={modelWindow}
+          provider={provider}
           compacting={compacting}
           canCompact={!running}
           onCompact={() => void compact()}
@@ -137,6 +167,7 @@ export function Composer() {
 function UsageLine({
   usage,
   modelWindow,
+  provider,
   compacting,
   canCompact,
   onCompact,
@@ -149,6 +180,7 @@ function UsageLine({
     cachedTokens: number
   } | null
   modelWindow: number
+  provider: string
   compacting: boolean
   canCompact: boolean
   onCompact: () => void
@@ -201,7 +233,9 @@ function UsageLine({
         </button>
       )}
 
-      <span className="ml-auto">local · $0.00</span>
+      <span className="ml-auto">
+        {provider === 'ollama' ? 'local · $0.00' : 'external endpoint'}
+      </span>
     </div>
   )
 }

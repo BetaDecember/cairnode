@@ -1,7 +1,7 @@
 import { useApp } from '../state/store'
 import { cn } from '../lib/cn'
 import { shortPath } from '../lib/path'
-import { Layers, Moon, Plus, Sun } from './icons'
+import { Gear, Layers, Moon, Plus, Sun } from './icons'
 
 interface Props {
   title: string
@@ -10,9 +10,18 @@ interface Props {
   view: 'app' | 'gallery'
   onToggleTheme: () => void
   onToggleView: () => void
+  onOpenSettings: () => void
 }
 
-export function TitleBar({ title, cwd, theme, view, onToggleTheme, onToggleView }: Props) {
+export function TitleBar({
+  title,
+  cwd,
+  theme,
+  view,
+  onToggleTheme,
+  onToggleView,
+  onOpenSettings,
+}: Props) {
   return (
     <header className="drag-region grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-line bg-canvas px-[76px]">
       <div />
@@ -39,6 +48,9 @@ export function TitleBar({ title, cwd, theme, view, onToggleTheme, onToggleView 
           onClick={onToggleTheme}
         >
           {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
+        </IconButton>
+        <IconButton label="Settings" onClick={onOpenSettings}>
+          <Gear size={15} />
         </IconButton>
       </div>
     </header>

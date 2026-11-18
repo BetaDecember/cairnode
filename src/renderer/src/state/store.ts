@@ -6,6 +6,7 @@ import type {
   SessionMeta,
   SessionState,
 } from '@core/types'
+import type { ProviderId, Settings, SettingsPatch } from '@core/settings'
 import type { PermissionDecision } from '@core/agent/permission'
 import {
   beginTurn,
@@ -21,8 +22,12 @@ type Theme = 'light' | 'dark'
 type View = 'app' | 'gallery'
 
 const THEME_KEY = 'recode.theme'
-const MODEL_KEY = 'recode.model'
+const PROVIDER_KEY = 'recode.provider'
+const MODEL_KEY_PREFIX = 'recode.model.'
+/** Written by versions that only knew about Ollama. */
+const LEGACY_MODEL_KEY = 'recode.model'
 const FALLBACK_MODEL = 'qwen3.5:4b'
+const NO_MODELS_NOTICE = 'No models found. Check Settings.'
 
 const MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypass']
 
@@ -39,6 +44,55 @@ function readView(): View {
     : 'app'
 }
 
+function readProvider(): ProviderId {
+  return localStorage.getItem(PROVIDER_KEY) === 'openai' ? 'openai' : 'ollama'
+}
+
+function readModel(providerId: ProviderId): string | null {
+  const saved = localStorage.getItem(`${MODEL_KEY_PREFIX}${providerId}`)
+  if (saved) return saved
+  return providerId === 'ollama' ? localStorage.getItem(LEGACY_MODEL_KEY) : null
+}
+
+function writeSelection(providerId: ProviderId, model: string): void {
+  localStorage.setItem(PROVIDER_KEY, providerId)
+  localStorage.setItem(`${MODEL_KEY_PREFIX}${providerId}`, model)
+}
+
+/**
+ * Pick a model that exists in the current listing.
+ *
+ * The remembered choice wins when it is still offered; otherwise prefer a
+ * model that can call tools, then anything from the requested provider, then
+ * any provider at all. Keeping a stale id is better than an empty picker when
+ * the server is simply down.
+ */
+function chooseSelection(
+  models: ModelInfo[],
+  preferredProvider: ProviderId,
+  preferredModel: string | null,
+): { provider: ProviderId; model: string } {
+  const preferred = models.filter((model) => model.providerId === preferredProvider)
+
+  if (preferredModel && preferred.some((model) => model.id === preferredModel)) {
+    return { provider: preferredProvider, model: preferredModel }
+  }
+
+  const firstPreferred = preferred.find((model) => model.capabilities.nativeTools) ?? preferred[0]
+  if (firstPreferred) return { provider: preferredProvider, model: firstPreferred.id }
+
+  for (const providerId of ['ollama', 'openai'] as const) {
+    const candidates = models.filter((model) => model.providerId === providerId)
+    const first = candidates.find((model) => model.capabilities.nativeTools) ?? candidates[0]
+    if (first) return { provider: providerId, model: first.id }
+  }
+
+  return {
+    provider: preferredProvider,
+    model: preferredModel ?? FALLBACK_MODEL,
+  }
+}
+
 interface AppState {
   booted: boolean
   theme: Theme
@@ -51,6 +105,9 @@ interface AppState {
   compacting: boolean
   sessionState: SessionState
   models: ModelInfo[]
+  settings: Settings | null
+  settingsOpen: boolean
+  provider: ProviderId
   model: string
   mode: PermissionMode
   notice: string | null
@@ -59,9 +116,13 @@ interface AppState {
   setTheme(theme: Theme): void
   toggleTheme(): void
   setView(view: View): void
-  setModel(id: string): void
+  setModel(providerId: ProviderId, id: string): void
   cycleMode(): void
   dismissNotice(): void
+  openSettings(): Promise<void>
+  closeSettings(): void
+  saveSettings(patch: SettingsPatch): Promise<void>
+  refreshModels(): Promise<void>
 
   refreshSessions(): Promise<void>
   newSession(): Promise<void>
@@ -104,7 +165,10 @@ export const useApp = create<AppState>((set, get) => ({
   compacting: false,
   sessionState: 'idle',
   models: [],
-  model: localStorage.getItem(MODEL_KEY) ?? FALLBACK_MODEL,
+  settings: null,
+  settingsOpen: false,
+  provider: readProvider(),
+  model: readModel(readProvider()) ?? FALLBACK_MODEL,
   mode: 'default',
   notice: null,
 
@@ -121,23 +185,22 @@ export const useApp = create<AppState>((set, get) => ({
 
     window.api.chat.onEvent((payload) => get().handleEvent(payload))
 
-    const [models, sessions] = await Promise.all([
+    const [settings, models, sessions] = await Promise.all([
+      window.api.settings.get().catch(() => null),
       window.api.models().catch(() => [] as ModelInfo[]),
       window.api.sessions.list().catch(() => [] as SessionMeta[]),
     ])
 
-    const stored = localStorage.getItem(MODEL_KEY)
-    const model =
-      models.find((candidate) => candidate.id === stored)?.id ??
-      models.find((candidate) => candidate.capabilities.nativeTools)?.id ??
-      models[0]?.id ??
-      FALLBACK_MODEL
+    const provider = readProvider()
+    const selection = chooseSelection(models, provider, readModel(provider))
 
     set({
+      settings,
       models,
       sessions,
-      model,
-      notice: models.length === 0 ? 'No models found. Is Ollama running?' : null,
+      provider: selection.provider,
+      model: selection.model,
+      notice: models.length === 0 ? NO_MODELS_NOTICE : null,
     })
 
     const first = sessions[0]
@@ -158,9 +221,9 @@ export const useApp = create<AppState>((set, get) => ({
     set({ view })
   },
 
-  setModel(id) {
-    localStorage.setItem(MODEL_KEY, id)
-    set({ model: id })
+  setModel(providerId, id) {
+    writeSelection(providerId, id)
+    set({ provider: providerId, model: id })
   },
 
   cycleMode() {
@@ -171,6 +234,51 @@ export const useApp = create<AppState>((set, get) => ({
 
   dismissNotice() {
     set({ notice: null })
+  },
+
+  async openSettings() {
+    if (!get().settings) {
+      try {
+        const settings = await window.api.settings.get()
+        set({ settings })
+      } catch (error) {
+        set({ notice: error instanceof Error ? error.message : String(error) })
+        return
+      }
+    }
+    set({ settingsOpen: true })
+  },
+
+  closeSettings() {
+    set({ settingsOpen: false })
+  },
+
+  async saveSettings(patch) {
+    const settings = await window.api.settings.save(patch)
+    set({ settings })
+    await get().refreshModels()
+  },
+
+  async refreshModels() {
+    let models: ModelInfo[]
+    try {
+      models = await window.api.models()
+    } catch {
+      return
+    }
+
+    const selection = chooseSelection(models, get().provider, get().model)
+    set({
+      models,
+      provider: selection.provider,
+      model: selection.model,
+      notice:
+        models.length === 0
+          ? NO_MODELS_NOTICE
+          : get().notice === NO_MODELS_NOTICE
+            ? null
+            : get().notice,
+    })
   },
 
   async refreshSessions() {
@@ -267,6 +375,7 @@ export const useApp = create<AppState>((set, get) => ({
       await window.api.chat.send({
         sessionId,
         text: trimmed,
+        providerId: get().provider,
         model: get().model,
         mode: get().mode,
       })
@@ -292,7 +401,11 @@ export const useApp = create<AppState>((set, get) => ({
 
     set({ compacting: true })
     try {
-      await window.api.chat.compact({ sessionId: id, model: get().model })
+      await window.api.chat.compact({
+        sessionId: id,
+        providerId: get().provider,
+        model: get().model,
+      })
       set({ notice: null })
     } catch (error) {
       set({ notice: error instanceof Error ? error.message : String(error) })

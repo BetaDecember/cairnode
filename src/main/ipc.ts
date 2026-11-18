@@ -2,8 +2,10 @@ import { app, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { SessionStore } from '../core/session.ts'
+import { MAX_NUM_CTX, MIN_NUM_CTX } from '../core/settings.ts'
 import { AgentHost } from './agent-host'
-import { listModels } from './models'
+import { listModels, invalidateModels } from './models'
+import { SettingsStore } from './settings'
 
 /**
  * Every IPC payload is validated here, in main. The renderer is untrusted by
@@ -12,6 +14,19 @@ import { listModels } from './models'
  */
 
 const SessionId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+const ProviderId = z.enum(['ollama', 'openai'])
+const BaseUrl = z
+  .string()
+  .min(1)
+  .max(2048)
+  .refine((value) => {
+    try {
+      const url = new URL(value.trim())
+      return url.protocol === 'http:' || url.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }, 'Use an http:// or https:// URL')
 
 const CreateInput = z.object({ cwd: z.string().min(1).max(4096).optional() }).strict()
 
@@ -22,8 +37,9 @@ const SendInput = z
     sessionId: SessionId,
     text: z.string().min(1).max(100_000),
     mode: z.enum(['default', 'acceptEdits', 'plan', 'bypass']).optional(),
+    providerId: ProviderId.optional(),
     model: z.string().min(1).max(200).optional(),
-    numCtx: z.number().int().min(2048).max(262_144).optional(),
+    numCtx: z.number().int().min(MIN_NUM_CTX).max(MAX_NUM_CTX).optional(),
     think: z.boolean().optional(),
   })
   .strict()
@@ -33,8 +49,33 @@ const AbortInput = z.object({ sessionId: SessionId }).strict()
 const CompactInput = z
   .object({
     sessionId: SessionId,
+    providerId: ProviderId.optional(),
     model: z.string().min(1).max(200).optional(),
-    numCtx: z.number().int().min(2048).max(262_144).optional(),
+    numCtx: z.number().int().min(MIN_NUM_CTX).max(MAX_NUM_CTX).optional(),
+  })
+  .strict()
+
+const SettingsPatchInput = z
+  .object({
+    ollama: z
+      .object({
+        baseUrl: BaseUrl,
+        numCtx: z.number().int().min(MIN_NUM_CTX).max(MAX_NUM_CTX),
+      })
+      .partial()
+      .strict()
+      .optional(),
+    openai: z
+      .object({
+        enabled: z.boolean(),
+        baseUrl: BaseUrl,
+        models: z.array(z.string().trim().min(1).max(200)).max(50),
+        numCtx: z.number().int().min(MIN_NUM_CTX).max(MAX_NUM_CTX),
+        apiKey: z.string().max(4096).nullable(),
+      })
+      .partial()
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -47,7 +88,8 @@ const RespondInput = z
 
 export function registerIpc(): void {
   const store = new SessionStore(join(app.getPath('userData'), 'sessions'))
-  const host = new AgentHost(store)
+  const settings = new SettingsStore()
+  const host = new AgentHost(store, settings)
 
   /**
    * A session may only point at a directory the user has actually chosen.
@@ -69,7 +111,16 @@ export function registerIpc(): void {
     isDev: !app.isPackaged,
   }))
 
-  ipcMain.handle('models:list', () => listModels())
+  ipcMain.handle('models:list', () => listModels(settings))
+
+  ipcMain.handle('settings:get', () => settings.read())
+
+  ipcMain.handle('settings:save', async (_event, raw: unknown) => {
+    const updated = await settings.update(SettingsPatchInput.parse(raw ?? {}))
+    // A new base URL or model list must not wait for the listing cache.
+    invalidateModels()
+    return updated
+  })
 
   ipcMain.handle('session:list', () => store.list())
 

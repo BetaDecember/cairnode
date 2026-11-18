@@ -376,6 +376,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           await append({
             role: 'tool',
             toolName: call.name,
+            toolCallId: call.id,
             ok: false,
             content: `Unknown tool: ${call.name}. Available tools: ${allTools.map((t) => t.name).join(', ')}.`,
           })
@@ -420,6 +421,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           await append({
             role: 'tool',
             toolName: call.name,
+            toolCallId: call.id,
             ok: false,
             content: 'Denied by the user.',
           })
@@ -489,6 +491,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           await append({
             role: 'tool',
             toolName: call.name,
+            toolCallId: call.id,
             ok: false,
             content: `Error: ${detail}`,
           })
@@ -519,6 +522,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
         await append({
           role: 'tool',
           toolName: call.name,
+          toolCallId: call.id,
           ok: result.ok,
           uiDiff: result.diff,
           content: result.content,

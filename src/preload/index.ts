@@ -45,6 +45,12 @@ const api: RecodeApi = {
     },
   },
 
+  memory: {
+    status: (sessionId: string) => ipcRenderer.invoke('memory:status', { id: sessionId }),
+    trust: (input: { sessionId: string; fingerprint: string }) =>
+      ipcRenderer.invoke('memory:trust', input),
+  },
+
   workspace: {
     pick: () => ipcRenderer.invoke('workspace:pick'),
   },

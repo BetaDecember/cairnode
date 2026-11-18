@@ -4,6 +4,8 @@ import { compactConversation } from '../core/agent/compact.ts'
 import { buildSystemPrompt } from '../core/agent/prompt.ts'
 import { estimateMessagesTokens } from '../core/tokens.ts'
 import { builtinTools } from '../core/tools/builtin.ts'
+import { formatProjectMemory } from '../core/memory.ts'
+import type { TrustStore } from '../core/trust.ts'
 import type { ProviderId } from '../core/settings.ts'
 import type { PermissionDecision, PermissionRequest } from '../core/agent/permission.ts'
 import type { AgentEvent } from '../core/types.ts'
@@ -11,6 +13,7 @@ import type { ChatCompactInput, ChatSendInput } from '../core/api.ts'
 import type { DiagnosticsLog } from '../core/diagnostics.ts'
 import type { ChatMessage, Provider, ToolSchema } from '../core/provider/types.ts'
 import type { SessionStore, SessionRecord } from '../core/session.ts'
+import { readMemory } from './memory.ts'
 import { providerFor, numCtxFor } from './providers.ts'
 import type { SettingsStore } from './settings.ts'
 
@@ -55,6 +58,7 @@ function toolSchemas(): ToolSchema[] {
 export class AgentHost {
   private readonly store: SessionStore
   private readonly settings: SettingsStore
+  private readonly trust: TrustStore
   private readonly runs = new Map<string, Run>()
   private readonly compacting = new Map<string, AbortController>()
   private readonly pending = new Map<string, PendingPermission>()
@@ -63,10 +67,12 @@ export class AgentHost {
   constructor(
     store: SessionStore,
     settings: SettingsStore,
+    trust: TrustStore,
     diagnostics: DiagnosticsLog | null = null,
   ) {
     this.store = store
     this.settings = settings
+    this.trust = trust
     this.diagnostics = diagnostics
   }
 
@@ -96,11 +102,24 @@ export class AgentHost {
       if (!record) throw new Error('No such session.')
       if (controller.signal.aborted) throw new Error('The run was cancelled.')
 
+      // Instructions are only injected after the user has reviewed that exact
+      // content. This is enforced here as well as in the renderer so a stale
+      // window cannot start a run against newly changed instructions.
+      const memory = await readMemory(record.meta.cwd, this.trust)
+      if (memory.memory.files.length > 0 && memory.state !== 'trusted') {
+        throw new Error(
+          memory.state === 'changed'
+            ? 'The project instructions changed since you trusted them. Review them before continuing.'
+            : 'Review and trust the project instructions before running the agent.',
+        )
+      }
+
       const userMessage: ChatMessage = { role: 'user', content: text }
       await this.store.append(sessionId, [userMessage])
       record.history.push(userMessage)
 
-      void this.execute(input, target, record, controller).finally(() => {
+      const projectMemory = formatProjectMemory(memory.memory) ?? undefined
+      void this.execute(input, target, record, controller, projectMemory).finally(() => {
         this.runs.delete(sessionId)
       })
 
@@ -274,6 +293,7 @@ export class AgentHost {
     target: Target,
     record: SessionRecord,
     controller: AbortController,
+    projectMemory?: string,
   ): Promise<void> {
     const sessionId = input.sessionId
 
@@ -288,6 +308,7 @@ export class AgentHost {
         conversation: record.history,
         tools: builtinTools,
         signal: controller.signal,
+        projectMemory,
         ask: (request) => this.ask(sessionId, request),
         // Persist each message as it lands, so a crash costs one turn at most.
         onMessage: (message) => this.store.append(sessionId, [message]),

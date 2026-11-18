@@ -6,6 +6,7 @@ import type {
   SessionMeta,
   SessionState,
 } from '@core/types'
+import type { ProjectMemoryStatus } from '@core/api'
 import type { ProviderId, Settings, SettingsPatch } from '@core/settings'
 import type { PermissionDecision } from '@core/agent/permission'
 import {
@@ -113,6 +114,8 @@ interface AppState {
   model: string
   mode: PermissionMode
   notice: string | null
+  /** Project instructions and whether this exact content has been trusted. */
+  memory: ProjectMemoryStatus | null
 
   boot(): Promise<void>
   setTheme(theme: Theme): void
@@ -121,6 +124,9 @@ interface AppState {
   setModel(providerId: ProviderId, id: string): void
   cycleMode(): void
   dismissNotice(): void
+  notify(message: string): void
+  refreshMemory(sessionId?: string): Promise<void>
+  trustMemory(): Promise<boolean>
   openSettings(): Promise<void>
   closeSettings(): void
   saveSettings(patch: SettingsPatch): Promise<void>
@@ -146,8 +152,9 @@ async function ensureSession(get: () => AppState, set: (partial: Partial<AppStat
   try {
     const meta = await window.api.sessions.create(get().cwd ?? undefined)
     resetIds()
-    set({ activeId: meta.id, cwd: meta.cwd, fold: emptyFold() })
+    set({ activeId: meta.id, cwd: meta.cwd, fold: emptyFold(), memory: null })
     await get().refreshSessions()
+    await get().refreshMemory(meta.id)
     return meta.id
   } catch (error) {
     set({ notice: error instanceof Error ? error.message : String(error) })
@@ -174,6 +181,7 @@ export const useApp = create<AppState>((set, get) => ({
   model: readModel(readProvider()) ?? FALLBACK_MODEL,
   mode: 'default',
   notice: null,
+  memory: null,
 
   async boot() {
     if (get().booted) return
@@ -237,6 +245,51 @@ export const useApp = create<AppState>((set, get) => ({
 
   dismissNotice() {
     set({ notice: null })
+  },
+
+  notify(message) {
+    set({ notice: message })
+  },
+
+  async refreshMemory(sessionId) {
+    const id = sessionId ?? get().activeId
+    if (!id) {
+      set({ memory: null })
+      return
+    }
+
+    try {
+      const memory = await window.api.memory.status(id)
+      // The user can switch sessions while the read is in flight.
+      if (get().activeId === id) set({ memory })
+    } catch {
+      // Keep the last known state. Main re-checks before a run either way.
+    }
+  },
+
+  async trustMemory() {
+    const id = get().activeId
+    const memory = get().memory
+    if (!id || !memory || memory.files.length === 0) return false
+
+    try {
+      const result = await window.api.memory.trust({
+        sessionId: id,
+        fingerprint: memory.fingerprint,
+      })
+      if (get().activeId !== id) return false
+
+      set({
+        memory: result.status,
+        notice: result.trusted
+          ? null
+          : 'The project instructions changed. Review them again before continuing.',
+      })
+      return result.trusted
+    } catch (error) {
+      set({ notice: error instanceof Error ? error.message : String(error) })
+      return false
+    }
   },
 
   async openSettings() {
@@ -309,8 +362,10 @@ export const useApp = create<AppState>((set, get) => ({
         resumable: false,
         compacting: false,
         sessionState: 'idle',
+        memory: null,
       })
       await get().refreshSessions()
+      await get().refreshMemory(meta.id)
     } catch (error) {
       set({ notice: error instanceof Error ? error.message : String(error) })
     }
@@ -331,8 +386,10 @@ export const useApp = create<AppState>((set, get) => ({
         resumable: false,
         compacting: false,
         sessionState: 'idle',
+        memory: null,
       })
       await get().refreshSessions()
+      await get().refreshMemory(meta.id)
     } catch (error) {
       set({ notice: error instanceof Error ? error.message : String(error) })
     }
@@ -352,6 +409,7 @@ export const useApp = create<AppState>((set, get) => ({
       resumable: record.resumable,
       compacting: false,
       sessionState: record.running ? 'thinking' : 'idle',
+      memory: record.memory,
     })
   },
 
@@ -364,7 +422,7 @@ export const useApp = create<AppState>((set, get) => ({
 
     const next = sessions[0]
     if (next) await get().openSession(next.id)
-    else set({ activeId: null, fold: emptyFold(), cwd: null, resumable: false })
+    else set({ activeId: null, fold: emptyFold(), cwd: null, resumable: false, memory: null })
   },
 
   async send(text) {
@@ -373,6 +431,20 @@ export const useApp = create<AppState>((set, get) => ({
 
     const sessionId = await ensureSession(get, set)
     if (!sessionId) return
+
+    // Main re-reads before the run; this is the friendly gate that keeps the
+    // prompt out of the transcript when the instructions have not been trusted.
+    await get().refreshMemory(sessionId)
+    const memory = get().memory
+    if (memory && memory.files.length > 0 && memory.trust !== 'trusted') {
+      set({
+        notice:
+          memory.trust === 'changed'
+            ? 'The project instructions changed. Review them before continuing.'
+            : 'Review and trust the project instructions before running the agent.',
+      })
+      return
+    }
 
     const wasResumable = get().resumable
     set({
@@ -401,6 +473,8 @@ export const useApp = create<AppState>((set, get) => ({
         resumable: wasResumable,
         notice: error instanceof Error ? error.message : String(error),
       })
+      // A rejected send may have been caused by instructions changing on disk.
+      void get().refreshMemory(sessionId)
     }
   },
 

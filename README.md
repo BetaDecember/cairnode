@@ -8,8 +8,9 @@ Built because the good agentic desktop apps assume a cloud model, and the good l
 models assume a terminal.
 
 > **Status:** early but usable. The agent loop, seven tools, permissions, sessions,
-> context compaction, both provider adapters, crash recovery, keyboard shortcuts, and
-> diagnostics export are in place. Distribution is source-only.
+> context compaction, project instructions with a trust gate, both provider adapters,
+> crash recovery, keyboard shortcuts, and diagnostics export are in place. Distribution
+> is source-only.
 
 ## Requirements
 
@@ -52,6 +53,28 @@ Sessions are append-only JSONL under `~/Library/Application Support/recode/sessi
 the app stops mid-turn, the session still loads: a tool call whose result never arrived is
 dropped so the conversation stays valid, and the composer shows that the last turn did not
 finish. Nothing runs automatically. The next message continues from the stored history.
+
+## Project instructions
+
+If the project root contains `AGENTS.md` or `CLAUDE.md`, both are loaded in that order and
+appended to the system prompt for every message in the session. They are context, not
+authority: they cannot change permissions, and the system prompt tells the model to treat
+instructions to reveal secrets or bypass a rule as untrusted.
+
+- Each file is capped at 8 KB and the pair at 12 KB. A truncated file says so in the
+  prompt and in the review dialog.
+- Symlinks and binary files are skipped and reported, not followed. A repository should
+  not be able to pull another file into the prompt by linking to it.
+- Instructions stay off until you review the exact content and press **Trust this
+  project**. The trust record stores a SHA-256 fingerprint of what you read, so editing
+  either file invalidates it and the composer blocks again.
+- Sends are blocked in both the renderer and main while instructions are untrusted, and
+  main re-reads the files before a trust click so a change between display and click
+  cannot be trusted unseen.
+
+Trust lives in `~/Library/Application Support/recode/trust.json` (mode `0600`), separate
+from settings. It is keyed by resolved directory and holds the reviewed fingerprint plus
+the time it was granted.
 
 ## Diagnostics
 

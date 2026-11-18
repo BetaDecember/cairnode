@@ -4,8 +4,10 @@ import { z } from 'zod'
 import { DiagnosticsLog } from '../core/diagnostics.ts'
 import { SessionStore } from '../core/session.ts'
 import { MAX_NUM_CTX, MIN_NUM_CTX } from '../core/settings.ts'
+import { TrustStore } from '../core/trust.ts'
 import { AgentHost } from './agent-host'
 import { writeDiagnosticsReport } from './diagnostics'
+import { readMemory } from './memory'
 import { listModels, invalidateModels } from './models'
 import { SettingsStore } from './settings'
 
@@ -88,11 +90,19 @@ const RespondInput = z
   })
   .strict()
 
+const MemoryTrustInput = z
+  .object({
+    sessionId: SessionId,
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict()
+
 export function registerIpc(): AgentHost {
   const store = new SessionStore(join(app.getPath('userData'), 'sessions'))
   const settings = new SettingsStore()
+  const trust = new TrustStore(join(app.getPath('userData'), 'trust.json'))
   const diagnostics = new DiagnosticsLog()
-  const host = new AgentHost(store, settings, diagnostics)
+  const host = new AgentHost(store, settings, trust, diagnostics)
 
   /**
    * A session may only point at a directory the user has actually chosen.
@@ -149,6 +159,8 @@ export function registerIpc(): AgentHost {
     // re-approves the same project for new sessions and the agent's tools.
     approvedRoots.add(record.meta.cwd)
 
+    const memory = await readMemory(record.meta.cwd, trust)
+
     // Return only the public shape: `history` is for the agent, not a window.
     return {
       meta: record.meta,
@@ -156,6 +168,7 @@ export function registerIpc(): AgentHost {
       compactions: record.compactions,
       resumable: record.resumable,
       running: host.isRunning(id),
+      memory: memory.status,
     }
   })
 
@@ -163,6 +176,34 @@ export function registerIpc(): AgentHost {
     const { id } = SessionIdInput.parse(raw)
     host.abort(id)
     await store.remove(id)
+  })
+
+  ipcMain.handle('memory:status', async (_event, raw: unknown) => {
+    const { id } = SessionIdInput.parse(raw)
+    const record = await store.load(id)
+    if (!record) throw new Error('No such session.')
+    return (await readMemory(record.meta.cwd, trust)).status
+  })
+
+  ipcMain.handle('memory:trust', async (_event, raw: unknown) => {
+    const input = MemoryTrustInput.parse(raw)
+    const record = await store.load(input.sessionId)
+    if (!record) throw new Error('No such session.')
+
+    // The renderer supplies the fingerprint it displayed. Re-read first: if
+    // the file changed between display and click, ask the user to look again
+    // rather than trusting text they never saw.
+    const current = await readMemory(record.meta.cwd, trust)
+    if (
+      current.memory.files.length === 0 ||
+      current.status.fingerprint !== input.fingerprint
+    ) {
+      return { trusted: false, status: current.status }
+    }
+
+    await trust.trust(record.meta.cwd, input.fingerprint)
+    const next = await readMemory(record.meta.cwd, trust)
+    return { trusted: next.state === 'trusted', status: next.status }
   })
 
   ipcMain.handle('chat:send', async (_event, raw: unknown) =>

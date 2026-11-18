@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Composer } from './components/Composer'
 import { Gallery } from './components/Gallery'
+import { ProjectMemoryBar } from './components/ProjectMemory'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
@@ -102,6 +103,7 @@ export default function App() {
         <main className="flex min-w-0 flex-1 flex-col bg-canvas">
           {view === 'app' ? (
             <>
+              <ProjectMemoryBar />
               <Transcript />
               <ResumeBar />
               <Composer />

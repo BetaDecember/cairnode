@@ -28,6 +28,10 @@ export function Composer() {
   const usage = useApp((state) => state.fold.usage)
   const compacting = useApp((state) => state.compacting)
   const compact = useApp((state) => state.compact)
+  const memory = useApp((state) => state.memory)
+  const notify = useApp((state) => state.notify)
+
+  const gated = Boolean(memory && memory.files.length > 0 && memory.trust !== 'trusted')
 
   // Auto-grow up to ~9 lines, then scroll.
   useEffect(() => {
@@ -40,6 +44,10 @@ export function Composer() {
   const submit = () => {
     const text = value.trim()
     if (!text || running || compacting) return
+    if (gated) {
+      notify('Review and trust the project instructions before running the agent.')
+      return
+    }
     setValue('')
     void send(text)
   }
@@ -87,7 +95,13 @@ export function Composer() {
                 submit()
               }
             }}
-            placeholder={running ? 'Working — press stop to interrupt' : 'Ask for a change, or describe a bug…'}
+            placeholder={
+              running
+                ? 'Working — press stop to interrupt'
+                : gated
+                  ? 'Review the project instructions above to continue'
+                  : 'Ask for a change, or describe a bug…'
+            }
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-[1.55] text-ink outline-none placeholder:text-ink-faint"
           />
 

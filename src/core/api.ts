@@ -2,6 +2,8 @@ import type { AgentEvent, CompactionRecord, ModelInfo, PermissionMode, SessionMe
 import type { ProviderId, Settings, SettingsPatch } from './settings.ts'
 import type { ChatMessage } from './provider/types.ts'
 import type { PermissionDecision } from './agent/permission.ts'
+import type { ProjectMemoryFile, ProjectMemoryWarning } from './memory-types.ts'
+import type { TrustState } from './trust-types.ts'
 
 /**
  * The contract between the main process and the renderer.
@@ -19,6 +21,21 @@ export interface AppInfo {
   isDev: boolean
 }
 
+/**
+ * What the agent would load from the project root, plus whether the user has
+ * reviewed and trusted that exact content.
+ */
+export interface ProjectMemoryStatus {
+  cwd: string
+  files: ProjectMemoryFile[]
+  warnings: ProjectMemoryWarning[]
+  /** Content identity used to bind trust to what was reviewed. Empty when there are no files. */
+  fingerprint: string
+  trust: TrustState
+  bytes: number
+  truncated: boolean
+}
+
 export interface SessionLoad {
   meta: SessionMeta
   messages: ChatMessage[]
@@ -27,6 +44,7 @@ export interface SessionLoad {
   resumable: boolean
   /** A run for this session is still alive in main (e.g. the window reloaded). */
   running: boolean
+  memory: ProjectMemoryStatus
 }
 
 export interface ChatSendInput {
@@ -83,6 +101,18 @@ export interface RecodeApi {
     respond(input: PermissionRespondInput): Promise<boolean>
     /** Returns an unsubscribe function. */
     onEvent(callback: (payload: AgentStreamPayload) => void): () => void
+  }
+  memory: {
+    /** Re-read the project's instruction files and the trust record. */
+    status(sessionId: string): Promise<ProjectMemoryStatus>
+    /**
+     * Trust the instructions whose fingerprint was reviewed. Main re-reads and
+     * refuses if the files changed in the meantime.
+     */
+    trust(input: { sessionId: string; fingerprint: string }): Promise<{
+      trusted: boolean
+      status: ProjectMemoryStatus
+    }>
   }
   workspace: {
     pick(): Promise<string | null>

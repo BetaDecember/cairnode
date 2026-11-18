@@ -100,6 +100,7 @@ export function Composer() {
               value={selection}
               onChange={(event) => chooseModel(event.target.value)}
               disabled={running}
+              title="Switch model (⌘K)"
               className="max-w-[180px] cursor-pointer appearance-none truncate rounded-full border border-line bg-canvas px-2 py-[2px] text-[11px] text-ink-muted outline-none transition-colors hover:border-line-strong hover:text-ink disabled:opacity-60"
             >
               {!selected && <option value={selection}>{model}</option>}
@@ -135,6 +136,7 @@ export function Composer() {
                 type="button"
                 onClick={() => (running ? void abort() : submit())}
                 aria-label={running ? 'Stop' : 'Send'}
+                title={running ? 'Stop (Esc)' : 'Send (⌘⏎)'}
                 disabled={!running && (!value.trim() || compacting)}
                 className={cn(
                   'flex size-7 items-center justify-center rounded-full transition-colors',

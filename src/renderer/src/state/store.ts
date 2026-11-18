@@ -290,6 +290,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async newSession() {
+    if (get().running) {
+      set({ notice: 'Stop the current run before starting a new session.' })
+      return
+    }
     if (!get().cwd) {
       await get().chooseFolder()
       return

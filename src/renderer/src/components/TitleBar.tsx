@@ -93,7 +93,7 @@ export function NewSessionButton() {
       type="button"
       onClick={() => void newSession()}
       disabled={running}
-      title={running ? 'Wait for the current run to finish' : 'New session'}
+      title={running ? 'Wait for the current run to finish' : 'New session (⌘N)'}
       className="flex items-center gap-1.5 rounded-control border border-line bg-panel px-2 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-panel-2 disabled:opacity-50"
     >
       <Plus size={13} />

@@ -27,6 +27,50 @@ export default function App() {
     void boot()
   }, [boot])
 
+  // Shortcuts are global: the composer is not always focused, and stopping a
+  // run should work from anywhere in the window.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const state = useApp.getState()
+      // The settings dialog owns Escape and its own fields.
+      if (state.settingsOpen) return
+
+      if (event.key === 'Escape') {
+        if (state.running) {
+          event.preventDefault()
+          void state.abort()
+        }
+        return
+      }
+
+      if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+      if (state.view !== 'app') return
+
+      const key = event.key.toLowerCase()
+      if (key === 'n') {
+        event.preventDefault()
+        void state.newSession()
+        return
+      }
+
+      if (key === 'k' && !state.running) {
+        event.preventDefault()
+        const picker = document.getElementById('model-picker')
+        if (!(picker instanceof HTMLSelectElement)) return
+        picker.focus()
+        try {
+          const native = picker as HTMLSelectElement & { showPicker?: () => void }
+          native.showPicker?.()
+        } catch {
+          // Focusing is enough if the browser refuses the native popup.
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div className="flex h-full flex-col bg-canvas text-ink">
       <TitleBar

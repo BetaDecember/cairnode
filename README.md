@@ -53,6 +53,16 @@ the app stops mid-turn, the session still loads: a tool call whose result never 
 dropped so the conversation stays valid, and the composer shows that the last turn did not
 finish. Nothing runs automatically. The next message continues from the stored history.
 
+## Keyboard
+
+| Shortcut | Action |
+|---|---|
+| `Enter` or `⌘⏎` | Send |
+| `Shift+Enter` | New line |
+| `Esc` | Stop the current run |
+| `⌘N` | New session |
+| `⌘K` | Model picker |
+
 ## Scripts
 
 | Command | What it does |

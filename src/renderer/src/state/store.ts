@@ -381,7 +381,6 @@ export const useApp = create<AppState>((set, get) => ({
       resumable: false,
       sessionState: 'thinking',
     })
-    void get().refreshSessions()
 
     try {
       await window.api.chat.send({
@@ -392,6 +391,9 @@ export const useApp = create<AppState>((set, get) => ({
         mode: get().mode,
       })
       set({ notice: null })
+      // Main persists the user message before it returns, so the sidebar can
+      // now show the derived title instead of "New session".
+      void get().refreshSessions()
     } catch (error) {
       set({
         running: false,

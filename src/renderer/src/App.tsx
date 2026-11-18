@@ -59,6 +59,7 @@ export default function App() {
           {view === 'app' ? (
             <>
               <Transcript />
+              <ResumeBar />
               <Composer />
             </>
           ) : (
@@ -68,6 +69,31 @@ export default function App() {
       </div>
 
       <SettingsDialog />
+    </div>
+  )
+}
+
+/**
+ * A session restored from disk can stop in the middle of a turn: the process
+ * died, or the run was interrupted after its last saved message. Nothing is
+ * running, and the next message picks up from the stored history.
+ */
+function ResumeBar() {
+  const resumable = useApp((state) => state.resumable)
+  const running = useApp((state) => state.running)
+  const activeId = useApp((state) => state.activeId)
+
+  if (!resumable || running || !activeId) return null
+
+  return (
+    <div className="shrink-0 px-6 pb-2">
+      <div className="mx-auto flex w-full max-w-[760px] items-start gap-2 rounded-control border border-line bg-panel-2/60 px-3 py-2 text-[11.5px] leading-[1.5] text-ink-muted">
+        <span className="mt-[5px] size-1.5 shrink-0 rounded-full bg-clay" />
+        <span>
+          The last turn did not finish.{' '}
+          <span className="text-ink">Send a message to continue where it stopped.</span>
+        </span>
+      </div>
     </div>
   )
 }

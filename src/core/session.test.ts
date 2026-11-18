@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { SessionStore, titleFromText } from './session.ts'
+import { SessionStore, endsMidTurn, titleFromText } from './session.ts'
 
 async function store(): Promise<{ sessions: SessionStore; root: string }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-sessions-'))
@@ -22,6 +22,58 @@ describe('titleFromText', () => {
   })
 })
 
+describe('endsMidTurn', () => {
+  it('treats an empty session as settled', () => {
+    assert.equal(endsMidTurn([]), false)
+  })
+
+  it('is unfinished after a user message', () => {
+    assert.equal(endsMidTurn([{ role: 'user', content: 'do it' }]), true)
+  })
+
+  it('is unfinished while tool calls are unanswered', () => {
+    assert.equal(
+      endsMidTurn([
+        { role: 'user', content: 'do it' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'c1', name: 'Read', input: { path: 'a' } }],
+        },
+      ]),
+      true,
+    )
+  })
+
+  it('is unfinished after tool results, before the next reply', () => {
+    assert.equal(
+      endsMidTurn([
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'c1', name: 'Read', input: { path: 'a' } }],
+        },
+        { role: 'tool', toolName: 'Read', content: 'ok', ok: true },
+      ]),
+      true,
+    )
+  })
+
+  it('is unfinished after an empty assistant turn', () => {
+    assert.equal(endsMidTurn([{ role: 'assistant', content: '   ' }]), true)
+  })
+
+  it('is settled after a final assistant reply', () => {
+    assert.equal(
+      endsMidTurn([
+        { role: 'user', content: 'do it' },
+        { role: 'assistant', content: 'Done.' },
+      ]),
+      false,
+    )
+  })
+})
+
 describe('SessionStore', () => {
   it('creates a session and lists it', async () => {
     const { sessions } = await store()
@@ -34,6 +86,16 @@ describe('SessionStore', () => {
     const list = await sessions.list()
     assert.equal(list.length, 1)
     assert.equal(list[0]?.id, created.id)
+  })
+
+  it('marks a turn with no reply as waiting', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+    await sessions.append(id, [{ role: 'user', content: 'do it' }])
+
+    const record = await sessions.load(id)
+    assert.equal(record?.meta.preview, 'Waiting for a reply')
+    assert.equal(record?.resumable, true)
   })
 
   it('appends messages in order and derives title, preview, and timestamp', async () => {
@@ -57,6 +119,7 @@ describe('SessionStore', () => {
     assert.equal(record.meta.title, 'Add a /health endpoint with a test.')
     assert.equal(record.meta.preview, 'Added the route and a test.')
     assert.equal(record.meta.messageCount, 4)
+    assert.equal(record.resumable, false)
     assert.ok(record.meta.updatedAt >= record.meta.createdAt)
   })
 
@@ -94,6 +157,8 @@ describe('SessionStore', () => {
 
     const record = await sessions.load(id)
     assert.equal(record?.messages.length, 1)
+    // The truncated line was the only reply, so the turn is still open.
+    assert.equal(record?.resumable, true)
   })
 
   it('refuses an id that could escape the session directory', async () => {
@@ -128,6 +193,51 @@ describe('SessionStore', () => {
     const record = await sessions.load(id)
     assert.equal(record?.messages.length, 1)
     assert.equal(record?.messages[0]?.role, 'user')
+    assert.equal(record?.resumable, true)
+  })
+
+  it('does not let repair hide an unfinished raw tail', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+
+    // Not a sequence the loop produces, but the detector must read the raw
+    // tail: repair would remove the dangling call and leave a settled reply.
+    await sessions.append(id, [
+      { role: 'user', content: 'do it' },
+      { role: 'assistant', content: 'Done.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'Read', input: { path: 'a' } }],
+      },
+    ])
+
+    const record = await sessions.load(id)
+    assert.equal(record?.messages.length, 2)
+    assert.equal(record?.messages.at(-1)?.role, 'assistant')
+    assert.equal(record?.resumable, true)
+  })
+
+  it('sees a later unfinished turn even after an earlier completed one', async () => {
+    const { sessions } = await store()
+    const { id } = await sessions.create('/tmp/project')
+
+    await sessions.append(id, [
+      { role: 'user', content: 'first task' },
+      { role: 'assistant', content: 'Done.' },
+      { role: 'user', content: 'second task' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'Read', input: { path: 'a' } }],
+      },
+    ])
+
+    const record = await sessions.load(id)
+    // The unfinished group is removed, leaving the user message that asked for it.
+    assert.equal(record?.messages.length, 3)
+    assert.equal(record?.messages.at(-1)?.role, 'user')
+    assert.equal(record?.resumable, true)
   })
 
   it('keeps a complete tool group', async () => {
@@ -146,6 +256,8 @@ describe('SessionStore', () => {
 
     const record = await sessions.load(id)
     assert.equal(record?.messages.length, 3)
+    // The model still owes a reply, so the turn is not settled.
+    assert.equal(record?.resumable, true)
   })
 
   it('gives the model the latest summary while keeping the transcript', async () => {

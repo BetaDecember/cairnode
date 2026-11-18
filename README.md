@@ -8,8 +8,8 @@ Built because the good agentic desktop apps assume a cloud model, and the good l
 models assume a terminal.
 
 > **Status:** early but usable. The agent loop, seven tools, permissions, sessions,
-> context compaction, and both provider adapters are in place. Crash recovery, keyboard
-> shortcuts, and packaging are next.
+> context compaction, both provider adapters, and crash recovery are in place.
+> Keyboard shortcuts and packaging are next.
 
 ## Requirements
 
@@ -45,6 +45,13 @@ Each provider has its own context window. For Ollama that number is sent as `num
 every run. Chat Completions has no portable context setting, so for OpenAI-compatible
 endpoints the value is the budget the context meter and compaction use — set it to match
 the server's actual window.
+
+## Sessions and crashes
+
+Sessions are append-only JSONL under `~/Library/Application Support/recode/sessions`. If
+the app stops mid-turn, the session still loads: a tool call whose result never arrived is
+dropped so the conversation stays valid, and the composer shows that the last turn did not
+finish. Nothing runs automatically. The next message continues from the stored history.
 
 ## Scripts
 

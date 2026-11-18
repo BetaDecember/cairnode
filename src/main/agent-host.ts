@@ -170,6 +170,11 @@ export class AgentHost {
     return true
   }
 
+  /** Whether an agent run is live in this process, regardless of what a window shows. */
+  isRunning(sessionId: string): boolean {
+    return this.runs.has(sessionId)
+  }
+
   respond(requestId: string, decision: PermissionDecision): boolean {
     const pending = this.pending.get(requestId)
     if (!pending) return false

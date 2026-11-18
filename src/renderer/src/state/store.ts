@@ -102,6 +102,8 @@ interface AppState {
   cwd: string | null
   fold: Fold
   running: boolean
+  /** The active session stopped mid-turn; sending continues it. */
+  resumable: boolean
   compacting: boolean
   sessionState: SessionState
   models: ModelInfo[]
@@ -162,6 +164,7 @@ export const useApp = create<AppState>((set, get) => ({
   cwd: null,
   fold: emptyFold(),
   running: false,
+  resumable: false,
   compacting: false,
   sessionState: 'idle',
   models: [],
@@ -299,6 +302,7 @@ export const useApp = create<AppState>((set, get) => ({
         activeId: meta.id,
         fold: emptyFold(),
         running: false,
+        resumable: false,
         compacting: false,
         sessionState: 'idle',
       })
@@ -320,6 +324,7 @@ export const useApp = create<AppState>((set, get) => ({
         activeId: meta.id,
         fold: emptyFold(),
         running: false,
+        resumable: false,
         compacting: false,
         sessionState: 'idle',
       })
@@ -339,9 +344,10 @@ export const useApp = create<AppState>((set, get) => ({
       activeId: id,
       cwd: record.meta.cwd,
       fold: foldMessages(record.messages, record.compactions),
-      running: false,
+      running: record.running,
+      resumable: record.resumable,
       compacting: false,
-      sessionState: 'idle',
+      sessionState: record.running ? 'thinking' : 'idle',
     })
   },
 
@@ -354,7 +360,7 @@ export const useApp = create<AppState>((set, get) => ({
 
     const next = sessions[0]
     if (next) await get().openSession(next.id)
-    else set({ activeId: null, fold: emptyFold(), cwd: null })
+    else set({ activeId: null, fold: emptyFold(), cwd: null, resumable: false })
   },
 
   async send(text) {
@@ -364,9 +370,11 @@ export const useApp = create<AppState>((set, get) => ({
     const sessionId = await ensureSession(get, set)
     if (!sessionId) return
 
+    const wasResumable = get().resumable
     set({
       fold: beginTurn(get().fold, trimmed),
       running: true,
+      resumable: false,
       sessionState: 'thinking',
     })
     void get().refreshSessions()
@@ -384,6 +392,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         running: false,
         sessionState: 'idle',
+        resumable: wasResumable,
         notice: error instanceof Error ? error.message : String(error),
       })
     }
@@ -436,7 +445,15 @@ export const useApp = create<AppState>((set, get) => ({
     set({ fold: reduce(get().fold, event) })
 
     if (event.type === 'done') {
-      set({ running: false, sessionState: 'idle' })
+      const unfinished =
+        event.stopReason === 'cancelled' ||
+        event.stopReason === 'error' ||
+        event.stopReason === 'context_full'
+      set({
+        running: false,
+        sessionState: 'idle',
+        resumable: unfinished || get().resumable,
+      })
       void get().refreshSessions()
     }
   },

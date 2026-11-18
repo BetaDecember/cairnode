@@ -48,6 +48,8 @@ export interface SessionRecord {
   /** What the model receives next: from the latest compaction, or all messages. */
   history: ChatMessage[]
   compactions: CompactionRecord[]
+  /** The last user turn has no final assistant reply yet. */
+  resumable: boolean
 }
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
@@ -70,6 +72,25 @@ export function titleFromText(text: string): string {
   const clean = cleanLine(text)
   if (!clean) return 'New session'
   return clean.length > 64 ? `${clean.slice(0, 61)}…` : clean
+}
+
+/**
+ * Whether the stored conversation stops in the middle of a user turn.
+ *
+ * A turn ends only when an assistant reply with no tool calls is appended. A
+ * user message, an unanswered tool call, a tool result awaiting the model, or
+ * an empty assistant turn all mean the process stopped before the turn did.
+ *
+ * Check the raw messages, before `repairConversation`: repair removes the
+ * incomplete group, which is exactly the evidence this needs.
+ */
+export function endsMidTurn(messages: ChatMessage[]): boolean {
+  const last = messages.at(-1)
+  if (!last) return false
+  if (last.role === 'user') return true
+  if (last.role === 'tool') return true
+  if (last.role === 'assistant') return Boolean(last.toolCalls?.length) || !last.content.trim()
+  return false
 }
 
 /**
@@ -112,6 +133,8 @@ export function repairConversation(messages: ChatMessage[]): ChatMessage[] {
 function previewFromMessages(messages: ChatMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
+    // No assistant reply after this user message: the turn is still open.
+    if (message?.role === 'user') return 'Waiting for a reply'
     if (message?.role !== 'assistant') continue
     const firstLine = message.content.split('\n').find((line) => line.trim())
     if (!firstLine) continue
@@ -247,6 +270,8 @@ export class SessionStore {
     }
 
     if (!base) return null
+    // Read the tail before repair, which removes the unanswered group.
+    const resumable = endsMidTurn(messages)
     const repaired = repairConversation(messages)
     // A crash can only remove the final incomplete group, so a boundary past
     // the repaired end belongs to that group and is not usable.
@@ -261,6 +286,7 @@ export class SessionStore {
       messages: repaired,
       history: historyFrom(repaired, usable),
       compactions: usable,
+      resumable,
     }
   }
 

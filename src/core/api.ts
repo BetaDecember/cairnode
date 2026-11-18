@@ -23,6 +23,10 @@ export interface SessionLoad {
   meta: SessionMeta
   messages: ChatMessage[]
   compactions: CompactionRecord[]
+  /** The last turn stopped before a final assistant reply; safe to continue. */
+  resumable: boolean
+  /** A run for this session is still alive in main (e.g. the window reloaded). */
+  running: boolean
 }
 
 export interface ChatSendInput {

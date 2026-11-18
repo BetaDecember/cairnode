@@ -138,13 +138,22 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('session:load', async (_event, raw: unknown) => {
-    const record = await store.load(SessionIdInput.parse(raw).id)
-    if (record) {
-      // The folder was approved when this session was created, so restoring it
-      // re-approves the same project for new sessions and the agent's tools.
-      approvedRoots.add(record.meta.cwd)
+    const { id } = SessionIdInput.parse(raw)
+    const record = await store.load(id)
+    if (!record) return null
+
+    // The folder was approved when this session was created, so restoring it
+    // re-approves the same project for new sessions and the agent's tools.
+    approvedRoots.add(record.meta.cwd)
+
+    // Return only the public shape: `history` is for the agent, not a window.
+    return {
+      meta: record.meta,
+      messages: record.messages,
+      compactions: record.compactions,
+      resumable: record.resumable,
+      running: host.isRunning(id),
     }
-    return record
   })
 
   ipcMain.handle('session:delete', async (_event, raw: unknown) => {

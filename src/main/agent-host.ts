@@ -55,7 +55,7 @@ export class AgentHost {
   private readonly store: SessionStore
   private readonly settings: SettingsStore
   private readonly runs = new Map<string, Run>()
-  private readonly compacting = new Set<string>()
+  private readonly compacting = new Map<string, AbortController>()
   private readonly pending = new Map<string, PendingPermission>()
 
   constructor(store: SessionStore, settings: SettingsStore) {
@@ -64,35 +64,44 @@ export class AgentHost {
   }
 
   async send(input: ChatSendInput): Promise<{ started: boolean }> {
-    if (this.runs.has(input.sessionId)) {
+    const sessionId = input.sessionId
+    if (this.runs.has(sessionId)) {
       throw new Error('That session is already running.')
     }
-    if (this.compacting.has(input.sessionId)) {
+    if (this.compacting.has(sessionId)) {
       throw new Error('Compaction is still running. Try again in a moment.')
     }
 
-    const text = input.text.trim()
-    if (!text) throw new Error('Message is empty.')
-
-    // Resolve first: a disabled or misconfigured provider should fail before a
-    // user message is persisted into a session that cannot answer.
-    const target = await this.resolve(input)
-
-    const record = await this.store.load(input.sessionId)
-    if (!record) throw new Error('No such session.')
-
-    const userMessage: ChatMessage = { role: 'user', content: text }
-    await this.store.append(input.sessionId, [userMessage])
-    record.history.push(userMessage)
-
+    // Reserve the session before the first await. Two sends arriving together
+    // must not both pass the check and run the same history.
     const controller = new AbortController()
-    this.runs.set(input.sessionId, { controller })
+    this.runs.set(sessionId, { controller })
 
-    void this.execute(input, target, record, controller).finally(() => {
-      this.runs.delete(input.sessionId)
-    })
+    try {
+      const text = input.text.trim()
+      if (!text) throw new Error('Message is empty.')
 
-    return { started: true }
+      // Resolve first: a disabled or misconfigured provider should fail before a
+      // user message is persisted into a session that cannot answer.
+      const target = await this.resolve(input)
+
+      const record = await this.store.load(sessionId)
+      if (!record) throw new Error('No such session.')
+      if (controller.signal.aborted) throw new Error('The run was cancelled.')
+
+      const userMessage: ChatMessage = { role: 'user', content: text }
+      await this.store.append(sessionId, [userMessage])
+      record.history.push(userMessage)
+
+      void this.execute(input, target, record, controller).finally(() => {
+        this.runs.delete(sessionId)
+      })
+
+      return { started: true }
+    } catch (error) {
+      this.runs.delete(sessionId)
+      throw error
+    }
   }
 
   /**
@@ -100,31 +109,39 @@ export class AgentHost {
    * and never while a run is active: the run holds its own message array.
    */
   async compact(input: ChatCompactInput): Promise<{ compacted: boolean }> {
-    if (this.runs.has(input.sessionId) || this.compacting.has(input.sessionId)) {
+    const sessionId = input.sessionId
+    if (this.runs.has(sessionId)) {
       throw new Error('Stop the run before compacting this session.')
     }
+    if (this.compacting.has(sessionId)) {
+      throw new Error('A compaction is already running.')
+    }
 
-    const target = await this.resolve(input)
-    const record = await this.store.load(input.sessionId)
-    if (!record) throw new Error('No such session.')
-    if (record.history.length === 0) throw new Error('This session has nothing to compact yet.')
+    // Reserve before the first await, like send. A delete or quit can stop it.
+    const controller = new AbortController()
+    this.compacting.set(sessionId, controller)
 
-    this.compacting.add(input.sessionId)
     try {
+      const target = await this.resolve(input)
+      const record = await this.store.load(sessionId)
+      if (!record) throw new Error('No such session.')
+      if (record.history.length === 0) throw new Error('This session has nothing to compact yet.')
+
       const result = await compactConversation(record.history, {
         provider: target.provider,
         model: target.model,
         numCtx: target.numCtx,
         tools: toolSchemas(),
+        signal: controller.signal,
       })
 
-      await this.store.appendCompaction(input.sessionId, {
+      await this.store.appendCompaction(sessionId, {
         at: new Date().toISOString(),
         summary: result.summary,
         task: result.task,
         dropped: result.dropped,
       })
-      this.emit(input.sessionId, {
+      this.emit(sessionId, {
         type: 'compaction',
         summary: result.summary,
         task: result.task,
@@ -139,7 +156,7 @@ export class AgentHost {
           content: message.content,
         })),
       )
-      this.emit(input.sessionId, {
+      this.emit(sessionId, {
         type: 'usage',
         usage: {
           promptTokens: estimated,
@@ -151,28 +168,50 @@ export class AgentHost {
         },
       })
       return { compacted: true }
+    } catch (error) {
+      // A session deleted while summarizing must not come back with a summary.
+      if (controller.signal.aborted) return { compacted: false }
+      throw error
     } finally {
-      this.compacting.delete(input.sessionId)
+      this.compacting.delete(sessionId)
     }
   }
 
   abort(sessionId: string): boolean {
     const run = this.runs.get(sessionId)
-    if (!run) return false
+    const compaction = this.compacting.get(sessionId)
+    if (!run && !compaction) return false
 
-    // A run blocked on a permission prompt will never see the abort signal
-    // unless the pending decision is released.
-    for (const pending of this.pending.values()) {
-      if (pending.sessionId === sessionId) pending.resolve('deny')
+    // A summary that lands after the session is deleted would resurrect it.
+    compaction?.abort()
+
+    if (run) {
+      // A run blocked on a permission prompt will never see the abort signal
+      // unless the pending decision is released.
+      for (const pending of this.pending.values()) {
+        if (pending.sessionId === sessionId) pending.resolve('deny')
+      }
+
+      run.controller.abort()
     }
 
-    run.controller.abort()
     return true
   }
 
   /** Whether an agent run is live in this process, regardless of what a window shows. */
   isRunning(sessionId: string): boolean {
     return this.runs.has(sessionId)
+  }
+
+  /**
+   * Stop every run and summary in flight. Each abort releases pending
+   * permission prompts and lets a running Bash tool kill its process group
+   * before the window or app goes away.
+   */
+  abortAll(): void {
+    for (const sessionId of [...this.runs.keys(), ...this.compacting.keys()]) {
+      this.abort(sessionId)
+    }
   }
 
   respond(requestId: string, decision: PermissionDecision): boolean {

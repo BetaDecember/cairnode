@@ -1,10 +1,13 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, powerMonitor, shell } from 'electron'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
 
 const isDev = !app.isPackaged
 
-function createWindow(): BrowserWindow {
+type Host = ReturnType<typeof registerIpc>
+let host: Host | null = null
+
+function createWindow(agentHost: Host): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -25,6 +28,9 @@ function createWindow(): BrowserWindow {
   })
 
   win.on('ready-to-show', () => win.show())
+
+  // A detached Bash group must not outlive the window that started it.
+  win.on('closed', () => agentHost.abortAll())
 
   // Never let the app navigate itself away from the local renderer.
   win.webContents.on('will-navigate', (event, url) => {
@@ -48,13 +54,20 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
-  registerIpc()
-  createWindow()
+  host = registerIpc()
+
+  // A suspended machine stops network reads; end the turn instead of letting
+  // it look alive until the socket eventually times out.
+  powerMonitor.on('suspend', () => host?.abortAll())
+
+  createWindow(host)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0 && host) createWindow(host)
   })
 })
+
+app.on('before-quit', () => host?.abortAll())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -86,7 +86,7 @@ const RespondInput = z
   })
   .strict()
 
-export function registerIpc(): void {
+export function registerIpc(): AgentHost {
   const store = new SessionStore(join(app.getPath('userData'), 'sessions'))
   const settings = new SettingsStore()
   const host = new AgentHost(store, settings)
@@ -193,4 +193,6 @@ export function registerIpc(): void {
     lastCwd = picked
     return picked
   })
+
+  return host
 }

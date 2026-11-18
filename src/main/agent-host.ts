@@ -231,10 +231,11 @@ export class AgentHost {
    * before the window or app goes away.
    */
   abortAll(reason: 'window_closed' | 'quit' | 'suspend'): void {
-    this.diagnostics?.record({ kind: 'abort_all', reason })
-    for (const sessionId of [...this.runs.keys(), ...this.compacting.keys()]) {
-      this.abort(sessionId)
-    }
+    const active = [...this.runs.keys(), ...this.compacting.keys()]
+    // An idle window closing is not worth a diagnostics entry; a run being
+    // stopped on the way out is.
+    if (active.length > 0) this.diagnostics?.record({ kind: 'abort_all', reason })
+    for (const sessionId of active) this.abort(sessionId)
   }
 
   respond(requestId: string, decision: PermissionDecision): boolean {

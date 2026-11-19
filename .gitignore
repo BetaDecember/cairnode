@@ -3,6 +3,8 @@ out/
 dist/
 .DS_Store
 *.log
+test-results/
+playwright-report/
 
 # Reference material extracted from the installed app. NEVER commit.
 docs/reference.md

@@ -24,6 +24,8 @@ export default defineConfig({
     },
   },
   renderer: {
+    // Fixed so the Playwright web server can wait on a known URL.
+    server: { port: 5183, strictPort: true },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

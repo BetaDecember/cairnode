@@ -62,11 +62,42 @@ function isLocalEndpoint(url: string | undefined): boolean {
   }
 }
 
+const MAX_SUGGESTIONS = 8
+
+/** The `@token` being typed at the caret, if any. */
+function mentionAt(value: string, caret: number): { start: number; query: string } | null {
+  const before = value.slice(0, caret)
+  const match = /(^|\s)@([^\s@]*)$/.exec(before)
+  if (!match) return null
+  return { start: before.length - match[2]!.length - 1, query: match[2]! }
+}
+
+function countAts(value: string): number {
+  let count = 0
+  for (const character of value) if (character === '@') count += 1
+  return count
+}
+
+function mentionTokens(value: string): string[] {
+  const paths: string[] = []
+  for (const match of value.matchAll(/(?:^|\s)@([^\s@]+)/g)) {
+    const path = match[1]
+    if (path && !paths.includes(path)) paths.push(path)
+  }
+  return paths
+}
+
 export function Composer() {
   const [value, setValue] = useState('')
+  const [caret, setCaret] = useState(0)
+  const [files, setFiles] = useState<string[]>([])
+  const [filesFor, setFilesFor] = useState<string | null>(null)
+  const [active, setActive] = useState(0)
+  const [dismissed, setDismissed] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
 
   const running = useApp((state) => state.running)
+  const activeId = useApp((state) => state.activeId)
   const send = useApp((state) => state.send)
   const abort = useApp((state) => state.abort)
   const models = useApp((state) => state.models)
@@ -92,6 +123,93 @@ export function Composer() {
   const matches = slash
     ? COMMANDS.filter((command) => command.name.startsWith(slash))
     : []
+
+  const mention = running ? null : mentionAt(value, caret)
+  const mentionOpen = mention !== null && !dismissed
+
+  useEffect(() => {
+    setFiles([])
+    setFilesFor(null)
+    setActive(0)
+    setDismissed(false)
+  }, [activeId])
+
+  // The file list is a bounded index from main, fetched on first use per
+  // session. It carries paths only; nothing is read until the agent runs.
+  useEffect(() => {
+    if (!mentionOpen || !activeId || filesFor === activeId) return
+    if (!window.api?.workspace?.files) return
+
+    let cancelled = false
+    void window.api.workspace
+      .files(activeId)
+      .then((next) => {
+        if (cancelled) return
+        setFiles(next)
+        setFilesFor(activeId)
+      })
+      .catch(() => {
+        if (!cancelled) setFilesFor(activeId)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [mentionOpen, activeId, filesFor])
+
+  const suggestions = useMemo(() => {
+    if (!mention || !mentionOpen) return []
+    const query = mention.query.toLowerCase()
+
+    const rank = (file: string) => {
+      const lower = file.toLowerCase()
+      const base = lower.split('/').at(-1) ?? lower
+      if (query === '') return 0
+      if (base.startsWith(query)) return 0
+      if (lower.startsWith(query)) return 1
+      return 2
+    }
+
+    return files
+      .filter((file) => file.toLowerCase().includes(query))
+      .sort((a, b) => rank(a) - rank(b) || a.length - b.length || a.localeCompare(b))
+      .slice(0, MAX_SUGGESTIONS)
+  }, [files, mention, mentionOpen])
+
+  const choice = Math.min(active, Math.max(0, suggestions.length - 1))
+
+  const attached = useMemo(
+    () => (files.length > 0 ? mentionTokens(value).filter((path) => files.includes(path)) : []),
+    [value, files],
+  )
+
+  const acceptMention = (file: string) => {
+    if (!mention) return
+    const after = value.slice(caret).replace(/^\s+/, '')
+    const next = `${value.slice(0, mention.start)}@${file} ${after}`
+    const nextCaret = mention.start + file.length + 2
+
+    setValue(next)
+    setCaret(nextCaret)
+    setActive(0)
+    // The insert itself must not reopen the picker for the path just chosen.
+    setDismissed(true)
+    requestAnimationFrame(() => {
+      ref.current?.focus()
+      ref.current?.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
+  const removeMention = (path: string) => {
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const next = value
+      .replace(new RegExp(`(^|\\s)@${escaped}(?=\\s|$)`, 'g'), '$1')
+      .replace(/^\s+/, '')
+      .replace(/\s+$/, '')
+
+    setValue(next)
+    setCaret(next.length)
+  }
 
   // Auto-grow up to ~9 lines, then scroll.
   useEffect(() => {
@@ -168,8 +286,38 @@ export function Composer() {
             ref={ref}
             rows={1}
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            aria-label="Message"
+            onChange={(event) => {
+              const next = event.target.value
+              setValue(next)
+              setCaret(event.target.selectionStart)
+              setActive(0)
+              // Adding an `@` opens the picker, including a pasted one. Other
+              // typing keeps an explicit dismissal in place until then.
+              if (countAts(next) > countAts(value)) setDismissed(false)
+            }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
+              if (suggestions.length > 0) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  const step = event.key === 'ArrowDown' ? 1 : -1
+                  setActive((choice + step + suggestions.length) % suggestions.length)
+                  return
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setDismissed(true)
+                  return
+                }
+                if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+                  event.preventDefault()
+                  const picked = suggestions[choice]
+                  if (picked) acceptMention(picked)
+                  return
+                }
+              }
+
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 submit()
@@ -184,6 +332,61 @@ export function Composer() {
             }
             className="block w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-[13.5px] leading-[1.55] text-ink outline-none placeholder:text-ink-faint"
           />
+
+          {suggestions.length > 0 && (
+            <div
+              role="listbox"
+              aria-label="Project files"
+              className="mx-1 mb-1 overflow-hidden rounded-control border border-line bg-canvas py-0.5"
+            >
+              {suggestions.map((file, index) => {
+                const cut = file.lastIndexOf('/') + 1
+                return (
+                  <button
+                    key={file}
+                    type="button"
+                    role="option"
+                    aria-selected={index === choice}
+                    onMouseEnter={() => setActive(index)}
+                    onClick={() => acceptMention(file)}
+                    className={cn(
+                      'flex w-full items-baseline gap-2 px-2 py-[3px] text-left',
+                      index === choice && 'bg-panel-2',
+                    )}
+                  >
+                    <span className="truncate font-mono text-[11px]">
+                      <span className="text-ink-faint">{file.slice(0, cut)}</span>
+                      <span className="text-ink">{file.slice(cut)}</span>
+                    </span>
+                  </button>
+                )
+              })}
+              <div className="px-2 pt-0.5 pb-1 text-[10px] text-ink-faint">
+                ↑↓ choose · ⏎ insert · Esc dismiss
+              </div>
+            </div>
+          )}
+
+          {attached.length > 0 && (
+            <div className="flex flex-wrap gap-1 px-2.5 pb-1">
+              {attached.map((path) => (
+                <span
+                  key={path}
+                  className="flex items-center gap-1 rounded-control border border-line bg-canvas px-1.5 py-[1px] font-mono text-[10.5px] text-ink-muted"
+                >
+                  @{path}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${path}`}
+                    onClick={() => removeMention(path)}
+                    className="text-ink-faint transition-colors hover:text-ink"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {matches.length > 0 && !running && (
             <div className="flex flex-wrap gap-1 px-2.5 pb-0.5">

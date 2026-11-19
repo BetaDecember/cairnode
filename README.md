@@ -69,6 +69,16 @@ Typing a command prefix shows a hint row above the composer; click a hint or pre
 to run it. Any other text beginning with `/`, such as an absolute path, is a normal
 message.
 
+Type `@` to point the agent at a project file. Suggestions come from a bounded index of
+the session's folder — symlinks, dependency and build directories, and paths containing
+spaces are skipped, and the walk stops after 10,000 files. Only file paths cross IPC,
+never contents. The index is fetched the first time you type `@` in a session.
+
+Choosing a suggestion inserts a path token such as `@src/core/agent/loop.ts`. Those tokens
+become attachment chips under the composer, and the `×` on a chip removes the token. The
+prompt carries paths only; the model reads a file through the normal `Read` tool when it
+needs the contents, subject to the same permission gate.
+
 ## Sessions and crashes
 
 Sessions are append-only JSONL under `~/Library/Application Support/recode/sessions`. If

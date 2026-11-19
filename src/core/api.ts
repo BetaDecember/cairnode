@@ -116,6 +116,8 @@ export interface RecodeApi {
   }
   workspace: {
     pick(): Promise<string | null>
+    /** Project-relative paths for @-mentions; paths only, never contents. */
+    files(sessionId: string): Promise<string[]>
   }
   diagnostics: {
     /** Ask for a destination, then write the redacted support bundle. */

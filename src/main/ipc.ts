@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { DiagnosticsLog } from '../core/diagnostics.ts'
+import { listProjectFiles } from '../core/files.ts'
 import { SessionStore } from '../core/session.ts'
 import { MAX_NUM_CTX, MIN_NUM_CTX } from '../core/settings.ts'
 import { TrustStore } from '../core/trust.ts'
@@ -221,6 +222,18 @@ export function registerIpc(): AgentHost {
   ipcMain.handle('permission:respond', async (_event, raw: unknown) => {
     const input = RespondInput.parse(raw)
     return host.respond(input.requestId, input.decision)
+  })
+
+  ipcMain.handle('workspace:files', async (_event, raw: unknown) => {
+    const { id } = SessionIdInput.parse(raw)
+    const record = await store.load(id)
+    if (!record) throw new Error('No such session.')
+
+    // Mentions are a project feature: only a folder the user opened in this
+    // run can be indexed, so the list cannot roam the disk.
+    if (!approvedRoots.has(record.meta.cwd)) return []
+
+    return listProjectFiles(record.meta.cwd)
   })
 
   ipcMain.handle('workspace:pick', async () => {

@@ -53,6 +53,7 @@ const api: RecodeApi = {
 
   workspace: {
     pick: () => ipcRenderer.invoke('workspace:pick'),
+    files: (sessionId: string) => ipcRenderer.invoke('workspace:files', { id: sessionId }),
   },
 
   diagnostics: {

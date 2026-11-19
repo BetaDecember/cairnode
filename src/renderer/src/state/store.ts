@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentEvent,
+  ErrorClass,
   ModelInfo,
   PermissionMode,
   SessionMeta,
@@ -114,6 +115,13 @@ interface AppState {
   model: string
   mode: PermissionMode
   notice: string | null
+  /** A retryable provider failure is being waited out. */
+  retry: {
+    errorClass: ErrorClass
+    attempt: number
+    maxAttempts: number
+    waitMs: number
+  } | null
   /** Project instructions and whether this exact content has been trusted. */
   memory: ProjectMemoryStatus | null
 
@@ -152,7 +160,7 @@ async function ensureSession(get: () => AppState, set: (partial: Partial<AppStat
   try {
     const meta = await window.api.sessions.create(get().cwd ?? undefined)
     resetIds()
-    set({ activeId: meta.id, cwd: meta.cwd, fold: emptyFold(), memory: null })
+    set({ activeId: meta.id, cwd: meta.cwd, fold: emptyFold(), retry: null, memory: null })
     await get().refreshSessions()
     await get().refreshMemory(meta.id)
     return meta.id
@@ -181,6 +189,7 @@ export const useApp = create<AppState>((set, get) => ({
   model: readModel(readProvider()) ?? FALLBACK_MODEL,
   mode: 'default',
   notice: null,
+  retry: null,
   memory: null,
 
   async boot() {
@@ -362,6 +371,7 @@ export const useApp = create<AppState>((set, get) => ({
         resumable: false,
         compacting: false,
         sessionState: 'idle',
+        retry: null,
         memory: null,
       })
       await get().refreshSessions()
@@ -386,6 +396,7 @@ export const useApp = create<AppState>((set, get) => ({
         resumable: false,
         compacting: false,
         sessionState: 'idle',
+        retry: null,
         memory: null,
       })
       await get().refreshSessions()
@@ -409,6 +420,7 @@ export const useApp = create<AppState>((set, get) => ({
       resumable: record.resumable,
       compacting: false,
       sessionState: record.running ? 'thinking' : 'idle',
+      retry: null,
       memory: record.memory,
     })
   },
@@ -422,7 +434,7 @@ export const useApp = create<AppState>((set, get) => ({
 
     const next = sessions[0]
     if (next) await get().openSession(next.id)
-    else set({ activeId: null, fold: emptyFold(), cwd: null, resumable: false, memory: null })
+    else set({ activeId: null, fold: emptyFold(), cwd: null, resumable: false, retry: null, memory: null })
   },
 
   async send(text) {
@@ -451,6 +463,7 @@ export const useApp = create<AppState>((set, get) => ({
       fold: beginTurn(get().fold, trimmed),
       running: true,
       resumable: false,
+      retry: null,
       sessionState: 'thinking',
     })
 
@@ -481,6 +494,7 @@ export const useApp = create<AppState>((set, get) => ({
   async abort() {
     const id = get().activeId
     if (!id) return
+    set({ retry: null })
     await window.api.chat.abort(id)
   },
 
@@ -516,6 +530,21 @@ export const useApp = create<AppState>((set, get) => ({
 
   handleEvent({ sessionId, event }) {
     if (sessionId !== get().activeId) return
+
+    if (event.type === 'retry') {
+      set({
+        retry: {
+          errorClass: event.errorClass,
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          waitMs: event.waitMs,
+        },
+      })
+      return
+    }
+
+    // Any real output (or the end of the run) means the wait is over.
+    if (get().retry) set({ retry: null })
 
     if (event.type === 'session_state') {
       set({ sessionState: event.state })

@@ -95,6 +95,15 @@ export type AgentEvent =
       risk: RiskLevel
     }
   | { type: 'todo_update'; items: TodoItem[] }
+  | {
+      /** A retryable provider failure is being waited out before another try. */
+      type: 'retry'
+      errorClass: ErrorClass
+      attempt: number
+      maxAttempts: number
+      /** Time left in the current backoff, so the UI can count down. */
+      waitMs: number
+    }
   | { type: 'usage'; usage: Usage }
   | {
       type: 'compaction'

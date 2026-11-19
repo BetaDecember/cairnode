@@ -141,6 +141,10 @@ export function reduce(fold: Fold, event: AgentEvent): Fold {
     case 'session_state':
       return fold
 
+    // Transient: the store shows it above the composer, not in the transcript.
+    case 'retry':
+      return fold
+
     case 'thinking_delta':
       return appendThinking(fold, event.text)
 

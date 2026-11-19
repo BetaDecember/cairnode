@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ErrorClass } from '@core/types'
 import type { ProviderId } from '@core/settings'
 import { cn } from '../lib/cn'
 import { providerLabel } from '../lib/providers'
@@ -17,6 +18,20 @@ const COMMANDS = [
   { name: '/compact', description: 'Summarize earlier turns to free context' },
 ] as const
 
+interface RetryState {
+  errorClass: ErrorClass
+  attempt: number
+  maxAttempts: number
+  waitMs: number
+}
+
+function retryLabel(errorClass: ErrorClass): string {
+  if (errorClass === 'rate_limit') return 'Rate limited'
+  if (errorClass === 'overloaded') return 'Provider busy'
+  if (errorClass === 'network') return 'Connection lost'
+  return 'Provider error'
+}
+
 export function Composer() {
   const [value, setValue] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -34,6 +49,7 @@ export function Composer() {
   const compacting = useApp((state) => state.compacting)
   const compact = useApp((state) => state.compact)
   const newSession = useApp((state) => state.newSession)
+  const retry = useApp((state) => state.retry)
   const memory = useApp((state) => state.memory)
   const notify = useApp((state) => state.notify)
 
@@ -213,6 +229,8 @@ export function Composer() {
           </div>
         </div>
 
+        {retry && <RetryLine retry={retry} />}
+
         <UsageLine
           usage={usage}
           modelWindow={modelWindow}
@@ -222,6 +240,27 @@ export function Composer() {
           onCompact={() => void compact()}
         />
       </div>
+    </div>
+  )
+}
+
+function RetryLine({ retry }: { retry: RetryState }) {
+  const seconds = Math.max(1, Math.ceil(retry.waitMs / 1_000))
+
+  return (
+    <div
+      role="status"
+      className="mt-1.5 flex items-center gap-2 px-1 text-[10.5px] text-ink-muted"
+    >
+      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-warn" />
+      <span>
+        {retryLabel(retry.errorClass)} · retrying in{' '}
+        <span className="tabular-nums">{seconds}s</span>
+      </span>
+      <span className="text-ink-faint">
+        attempt {retry.attempt} of {retry.maxAttempts}
+      </span>
+      <span className="ml-auto text-ink-faint">Esc stops</span>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, ErrorClass, PermissionMode, TodoItem } from '../types.ts'
-import type { ChatMessage, Provider } from '../provider/types.ts'
+import type { ChatMessage, ChatRequest, Provider, ProviderEvent } from '../provider/types.ts'
 import { OllamaProvider } from '../provider/ollama.ts'
 import { PermissionBroker } from './permission.ts'
 import type { PermissionDecision, PermissionRequest } from './permission.ts'
@@ -41,6 +41,10 @@ export interface AgentRunOptions {
    */
   onMessage?: (message: ChatMessage) => void | Promise<void>
   maxTurns?: number
+  /** Extra tries after a retryable provider failure. Defaults to 3. */
+  maxRetries?: number
+  /** Test seam: replace the abortable backoff sleep. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
   /** Fraction of the context window at which the run stops cleanly. */
   contextCeiling?: number
   /** Fraction at which old tool output is replaced with stubs. */
@@ -79,6 +83,79 @@ function classifyError(error: unknown): { errorClass: ErrorClass; retryable: boo
   return { errorClass: 'unknown', retryable: false }
 }
 
+/** Rate limits need more room than a dropped local connection. */
+function retryDelayMs(errorClass: ErrorClass, attempt: number): number {
+  const base =
+    errorClass === 'rate_limit' ? 4_000 : errorClass === 'overloaded' ? 1_500 : 1_000
+  return base * 2 ** (attempt - 1)
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('The run was cancelled.'))
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new Error('The run was cancelled.'))
+    }
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Wrap one model call in the retry policy. Retrying is only safe before any
+ * output has been seen: replaying a half-streamed reply would duplicate text
+ * in the transcript and in history.
+ */
+async function* streamWithRetry(
+  provider: Provider,
+  request: ChatRequest,
+  maxRetries: number,
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>,
+): AsyncGenerator<ProviderEvent | Extract<AgentEvent, { type: 'retry' }>> {
+  for (let attempt = 0; ; attempt++) {
+    let produced = false
+    try {
+      for await (const event of provider.chat(request)) {
+        if (event.type === 'text' || event.type === 'thinking' || event.type === 'tool_call') {
+          produced = true
+        }
+        yield event
+      }
+      return
+    } catch (error) {
+      if (request.signal?.aborted) throw error
+
+      const { errorClass, retryable } = classifyError(error)
+      if (!retryable || produced || attempt >= maxRetries) throw error
+
+      const retryAttempt = attempt + 1
+      let remaining = retryDelayMs(errorClass, retryAttempt)
+      while (remaining > 0) {
+        yield {
+          type: 'retry',
+          errorClass,
+          attempt: retryAttempt,
+          maxAttempts: maxRetries,
+          waitMs: remaining,
+        }
+        const slice = Math.min(1_000, remaining)
+        await sleep(slice, request.signal)
+        remaining -= slice
+      }
+    }
+  }
+}
+
 function summarizeCall(tool: Tool, name: string, input: Record<string, unknown>): string {
   if (tool.summarize) return tool.summarize(input)
   if (name === 'Bash') return `$ ${String(input['command'] ?? '').slice(0, 160)}`
@@ -101,6 +178,8 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
   const provider = options.provider ?? new OllamaProvider()
   const allTools = options.tools ?? []
   const maxTurns = options.maxTurns ?? 25
+  const maxRetries = options.maxRetries ?? 3
+  const sleep = options.sleep ?? abortableSleep
   const ceiling = options.contextCeiling ?? 0.85
   const compactAt = options.compactAt ?? ceiling
   const trimAt = options.trimAt ?? 0.6
@@ -287,15 +366,20 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
       let lengthLimited = false
       const calls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
 
-      for await (const event of provider.chat({
+      const request: ChatRequest = {
         model: options.model,
         messages,
         tools: toolSchemas,
         numCtx: options.numCtx,
         think: options.think,
         signal: options.signal,
-      })) {
+      }
+
+      for await (const event of streamWithRetry(provider, request, maxRetries, sleep)) {
         switch (event.type) {
+          case 'retry':
+            yield event
+            break
           case 'thinking':
             thinking += event.text
             yield { type: 'thinking_delta', text: event.text, source: 'native' }

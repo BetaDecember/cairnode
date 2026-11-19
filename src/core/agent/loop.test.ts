@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { runAgent } from './loop.ts'
 import { builtinTools } from '../tools/builtin.ts'
+import { ProviderError } from '../provider/common.ts'
 import type { ChatRequest, Provider, ProviderEvent } from '../provider/types.ts'
 import type { AgentEvent } from '../types.ts'
 
@@ -231,6 +232,99 @@ describe('runAgent', () => {
 
     const done = events.at(-1)
     if (done?.type === 'done') assert.equal(done.stopReason, 'max_tokens')
+  })
+
+  it('retries a retryable provider failure before any output', async () => {
+    const cwd = await fixture({})
+    let calls = 0
+
+    const provider: Provider = {
+      id: 'flaky',
+      async listModels() {
+        return []
+      },
+      async *chat(): AsyncGenerator<ProviderEvent> {
+        calls += 1
+        if (calls < 3) throw new ProviderError('rate_limit', 'Slow down.')
+        yield { type: 'text', text: 'Recovered.' }
+      },
+    }
+
+    const events = await collect(
+      runAgent({ ...base, cwd, provider, sleep: async () => {} }),
+    )
+
+    assert.equal(calls, 3, 'the failed calls were tried again')
+    const retries = events.filter((event) => event.type === 'retry')
+    assert.equal(retries.length, 12, '4s and 8s of backoff, one event per second')
+    const first = retries[0]
+    if (first?.type === 'retry') {
+      assert.equal(first.errorClass, 'rate_limit')
+      assert.equal(first.attempt, 1)
+      assert.equal(first.maxAttempts, 3)
+      assert.equal(first.waitMs, 4_000)
+    }
+    assert.ok(events.some((event) => event.type === 'text_delta'))
+    assert.equal(events.at(-1)?.type, 'done')
+  })
+
+  it('does not replay a failure after text has streamed', async () => {
+    const cwd = await fixture({})
+    let calls = 0
+
+    const provider: Provider = {
+      id: 'half-stream',
+      async listModels() {
+        return []
+      },
+      async *chat(): AsyncGenerator<ProviderEvent> {
+        calls += 1
+        yield { type: 'text', text: 'Half a reply.' }
+        throw new ProviderError('rate_limit', 'Slow down.')
+      },
+    }
+
+    const events = await collect(
+      runAgent({ ...base, cwd, provider, sleep: async () => {} }),
+    )
+
+    assert.equal(calls, 1, 'partial output is never replayed')
+    assert.equal(events.filter((event) => event.type === 'retry').length, 0)
+    const error = events.find((event) => event.type === 'error')
+    if (error?.type === 'error') assert.equal(error.retryable, true)
+    assert.equal(events.at(-1)?.type, 'done')
+  })
+
+  it('stops retrying after the configured limit', async () => {
+    const cwd = await fixture({})
+    let calls = 0
+
+    const provider: Provider = {
+      id: 'down',
+      async listModels() {
+        return []
+      },
+      async *chat(): AsyncGenerator<ProviderEvent> {
+        calls += 1
+        throw new ProviderError('network', 'Connection refused.')
+      },
+    }
+
+    const events = await collect(
+      runAgent({
+        ...base,
+        cwd,
+        provider,
+        maxRetries: 1,
+        sleep: async () => {},
+      }),
+    )
+
+    assert.equal(calls, 2, 'one initial try plus one retry')
+    assert.equal(events.filter((event) => event.type === 'retry').length, 1)
+    const error = events.find((event) => event.type === 'error')
+    if (error?.type === 'error') assert.equal(error.errorClass, 'network')
+    assert.equal(events.at(-1)?.type, 'done')
   })
 
   it('streams progress while a command is still running', async () => {

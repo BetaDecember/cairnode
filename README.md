@@ -47,6 +47,11 @@ every run. Chat Completions has no portable context setting, so for OpenAI-compa
 endpoints the value is the budget the context meter and compaction use — set it to match
 the server's actual window.
 
+Rate limits, an overloaded server, and a dropped connection are retried up to three times
+with backoff before any output has streamed. The composer counts down the wait, and `Esc`
+cancels it. A failure after output has started is shown as an error instead of being
+replayed, so the transcript never contains the same text twice.
+
 ## Composer
 
 Two commands are handled locally instead of being sent to the model:

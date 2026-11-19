@@ -32,6 +32,36 @@ function retryLabel(errorClass: ErrorClass): string {
   return 'Provider error'
 }
 
+/** Measured on the reference Intel Mac; see `docs/benchmark.md`. */
+const COLD_PREFILL_TOK_PER_SEC = 31.1
+const CACHED_PREFILL_TOK_PER_SEC = 2_000
+
+function prefillSeconds(
+  used: number,
+  cachedShare: number,
+): number {
+  const cached = Math.round(used * cachedShare)
+  return (used - cached) / COLD_PREFILL_TOK_PER_SEC + cached / CACHED_PREFILL_TOK_PER_SEC
+}
+
+function formatWait(seconds: number): string {
+  if (seconds < 1) return '<1s'
+  if (seconds < 60) return `~${Math.round(seconds)}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds % 60)
+  return rest > 0 ? `~${minutes}m ${rest}s` : `~${minutes}m`
+}
+
+function isLocalEndpoint(url: string | undefined): boolean {
+  if (!url) return false
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+  } catch {
+    return false
+  }
+}
+
 export function Composer() {
   const [value, setValue] = useState('')
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -50,8 +80,12 @@ export function Composer() {
   const compact = useApp((state) => state.compact)
   const newSession = useApp((state) => state.newSession)
   const retry = useApp((state) => state.retry)
+  const settings = useApp((state) => state.settings)
   const memory = useApp((state) => state.memory)
   const notify = useApp((state) => state.notify)
+
+  // External endpoints do not run at the local benchmark's prefill speed.
+  const showPrefill = provider === 'ollama' || isLocalEndpoint(settings?.openai.baseUrl)
 
   const gated = Boolean(memory && memory.files.length > 0 && memory.trust !== 'trusted')
   const slash = value.trimStart().startsWith('/') ? value.trim().toLowerCase() : ''
@@ -235,6 +269,7 @@ export function Composer() {
           usage={usage}
           modelWindow={modelWindow}
           provider={provider}
+          showPrefill={showPrefill}
           compacting={compacting}
           canCompact={!running}
           onCompact={() => void compact()}
@@ -269,6 +304,7 @@ function UsageLine({
   usage,
   modelWindow,
   provider,
+  showPrefill,
   compacting,
   canCompact,
   onCompact,
@@ -282,6 +318,7 @@ function UsageLine({
   } | null
   modelWindow: number
   provider: string
+  showPrefill: boolean
   compacting: boolean
   canCompact: boolean
   onCompact: () => void
@@ -289,10 +326,11 @@ function UsageLine({
   const used = usage ? usage.promptTokens + usage.outputTokens : 0
   const contextWindow = usage?.contextWindow ?? modelWindow
   const pct = usage ? Math.round(usage.contextPct * 100) : 0
-  const cachedPct =
-    usage && usage.promptTokens > 0
-      ? Math.round((usage.cachedTokens / usage.promptTokens) * 100)
-      : 0
+  const cachedShare =
+    usage && usage.promptTokens > 0 ? usage.cachedTokens / usage.promptTokens : 0
+  const cachedPct = Math.round(cachedShare * 100)
+  const prefill =
+    showPrefill && usage && used > 0 ? prefillSeconds(used, cachedShare) : null
 
   return (
     <div className="mt-1.5 flex items-center gap-2 px-1 text-[10.5px] text-ink-faint">
@@ -312,6 +350,17 @@ function UsageLine({
           <span className="tabular-nums">{cachedPct}% cached</span>
           <span>·</span>
           <span className="tabular-nums">{pct}% ctx</span>
+          {prefill !== null && (
+            <>
+              <span>·</span>
+              <span
+                className="tabular-nums"
+                title="Estimated from the measured cold and cached prefill speeds, not a live timer"
+              >
+                prefill {formatWait(prefill)}
+              </span>
+            </>
+          )}
         </>
       ) : (
         <span>Ready</span>

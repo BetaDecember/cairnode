@@ -52,6 +52,10 @@ with backoff before any output has streamed. The composer counts down the wait, 
 cancels it. A failure after output has started is shown as an error instead of being
 replayed, so the transcript never contains the same text twice.
 
+For local endpoints the context meter also estimates the time the next prefill will take,
+using the cold and cached speeds measured in `docs/benchmark.md`. It is a planning number,
+not a live timer.
+
 ## Composer
 
 Two commands are handled locally instead of being sent to the model:

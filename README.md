@@ -48,9 +48,11 @@ endpoints the value is the budget the context meter and compaction use — set i
 the server's actual window.
 
 Rate limits, an overloaded server, and a dropped connection are retried up to three times
-with backoff before any output has streamed. The composer counts down the wait, and `Esc`
-cancels it. A failure after output has started is shown as an error instead of being
-replayed, so the transcript never contains the same text twice.
+before any output has streamed. A `Retry-After` header is honored, and rate limits wait
+at least 20 seconds before the next try; other failures back off from one second. The
+composer counts down the wait, and `Esc` cancels it. A failure after output has started is
+shown as an error instead of being replayed, so the transcript never contains the same
+text twice.
 
 For local endpoints the context meter also estimates the time the next prefill will take,
 using the cold and cached speeds measured in `docs/benchmark.md`. It is a planning number,

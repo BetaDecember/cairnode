@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { ChatMessage, ChatRequest, ModelRef, Provider, ProviderEvent } from './types.ts'
-import { ProviderError, classifyStatus, normalizeArguments } from './common.ts'
+import {
+  ProviderError,
+  classifyStatus,
+  normalizeArguments,
+  parseRetryAfter,
+} from './common.ts'
 
 /**
  * OpenAI-compatible Chat Completions adapter.
@@ -264,6 +269,7 @@ export class OpenAIProvider implements Provider {
       throw new ProviderError(
         classifyStatus(response.status),
         `HTTP ${response.status}: ${text.slice(0, 400)}`,
+        { retryAfterMs: parseRetryAfter(response.headers.get('retry-after')) },
       )
     }
     return response

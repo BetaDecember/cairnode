@@ -1,5 +1,10 @@
 import type { ChatRequest, ModelRef, Provider, ProviderEvent } from './types.ts'
-import { ProviderError, classifyStatus, normalizeArguments } from './common.ts'
+import {
+  ProviderError,
+  classifyStatus,
+  normalizeArguments,
+  parseRetryAfter,
+} from './common.ts'
 
 /**
  * Ollama native API adapter.
@@ -192,6 +197,7 @@ export class OllamaProvider implements Provider {
       throw new ProviderError(
         classifyStatus(response.status),
         `HTTP ${response.status}: ${text.slice(0, 400)}`,
+        { retryAfterMs: parseRetryAfter(response.headers.get('retry-after')) },
       )
     }
     return response

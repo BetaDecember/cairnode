@@ -70,24 +70,47 @@ const ERROR_CLASSES: ReadonlySet<string> = new Set<ErrorClass>([
 ])
 
 /** Read the provider's own classification without trusting an `any` cast. */
-function classifyError(error: unknown): { errorClass: ErrorClass; retryable: boolean } {
+function classifyError(error: unknown): {
+  errorClass: ErrorClass
+  retryable: boolean
+  retryAfterMs?: number
+} {
   if (error && typeof error === 'object') {
-    const candidate = error as { errorClass?: unknown; retryable?: unknown }
+    const candidate = error as {
+      errorClass?: unknown
+      retryable?: unknown
+      retryAfterMs?: unknown
+    }
     if (typeof candidate.errorClass === 'string' && ERROR_CLASSES.has(candidate.errorClass)) {
       return {
         errorClass: candidate.errorClass as ErrorClass,
         retryable: candidate.retryable === true,
+        retryAfterMs:
+          typeof candidate.retryAfterMs === 'number' ? candidate.retryAfterMs : undefined,
       }
     }
   }
   return { errorClass: 'unknown', retryable: false }
 }
 
-/** Rate limits need more room than a dropped local connection. */
-function retryDelayMs(errorClass: ErrorClass, attempt: number): number {
+/** A server-directed wait is honored, but never longer than this. */
+const MAX_RETRY_WAIT_MS = 5 * 60_000
+
+/**
+ * A 429 usually means a one-minute window, not a dropped connection. The old
+ * four-second floor burned all three retries before a hosted provider's limit
+ * reset; twenty seconds gives each retry a chance to land on the other side.
+ */
+const RATE_LIMIT_BASE_MS = 20_000
+
+function retryDelayMs(errorClass: ErrorClass, attempt: number, retryAfterMs?: number): number {
+  if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs)) {
+    return Math.min(Math.max(retryAfterMs, 1_000), MAX_RETRY_WAIT_MS)
+  }
+
   const base =
-    errorClass === 'rate_limit' ? 4_000 : errorClass === 'overloaded' ? 1_500 : 1_000
-  return base * 2 ** (attempt - 1)
+    errorClass === 'rate_limit' ? RATE_LIMIT_BASE_MS : errorClass === 'overloaded' ? 1_500 : 1_000
+  return Math.min(base * 2 ** (attempt - 1), MAX_RETRY_WAIT_MS)
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -135,11 +158,11 @@ async function* streamWithRetry(
     } catch (error) {
       if (request.signal?.aborted) throw error
 
-      const { errorClass, retryable } = classifyError(error)
+      const { errorClass, retryable, retryAfterMs } = classifyError(error)
       if (!retryable || produced || attempt >= maxRetries) throw error
 
       const retryAttempt = attempt + 1
-      let remaining = retryDelayMs(errorClass, retryAttempt)
+      let remaining = retryDelayMs(errorClass, retryAttempt, retryAfterMs)
       while (remaining > 0) {
         yield {
           type: 'retry',

@@ -233,9 +233,12 @@ describe('OpenAIProvider', () => {
     ])
   })
 
-  it('maps 429 onto a retryable rate-limit error', async () => {
+  it('maps 429 onto a retryable rate-limit error and keeps Retry-After', async () => {
     const transport = fakeFetch([
-      new Response('{"error":{"message":"slow down"}}', { status: 429 }),
+      new Response('{"error":{"message":"slow down"}}', {
+        status: 429,
+        headers: { 'retry-after': '45' },
+      }),
     ])
     const provider = new OpenAIProvider({
       baseUrl: 'http://127.0.0.1:1234/v1',
@@ -248,6 +251,7 @@ describe('OpenAIProvider', () => {
         assert.ok(error instanceof ProviderError)
         assert.equal(error.errorClass, 'rate_limit')
         assert.equal(error.retryable, true)
+        assert.equal(error.retryAfterMs, 45_000)
         assert.match(error.message, /429/)
         return true
       },

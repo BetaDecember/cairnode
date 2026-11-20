@@ -294,13 +294,47 @@ describe('runAgent', () => {
 
     assert.equal(calls, 3, 'the failed calls were tried again')
     const retries = events.filter((event) => event.type === 'retry')
-    assert.equal(retries.length, 12, '4s and 8s of backoff, one event per second')
+    assert.equal(retries.length, 60, '20s and 40s of backoff, one event per second')
     const first = retries[0]
     if (first?.type === 'retry') {
       assert.equal(first.errorClass, 'rate_limit')
       assert.equal(first.attempt, 1)
       assert.equal(first.maxAttempts, 3)
-      assert.equal(first.waitMs, 4_000)
+      assert.equal(first.waitMs, 20_000)
+    }
+    assert.ok(events.some((event) => event.type === 'text_delta'))
+    assert.equal(events.at(-1)?.type, 'done')
+  })
+
+  it('honors a Retry-After the provider supplies', async () => {
+    const cwd = await fixture({})
+    let calls = 0
+
+    const provider: Provider = {
+      id: 'limited',
+      async listModels() {
+        return []
+      },
+      async *chat(): AsyncGenerator<ProviderEvent> {
+        calls += 1
+        if (calls < 2) {
+          throw new ProviderError('rate_limit', 'Slow down.', { retryAfterMs: 45_000 })
+        }
+        yield { type: 'text', text: 'Recovered.' }
+      },
+    }
+
+    const events = await collect(
+      runAgent({ ...base, cwd, provider, sleep: async () => {} }),
+    )
+
+    assert.equal(calls, 2, 'the server-directed wait was used once')
+    const retries = events.filter((event) => event.type === 'retry')
+    assert.equal(retries.length, 45, '45s of backoff, one event per second')
+    const first = retries[0]
+    if (first?.type === 'retry') {
+      assert.equal(first.errorClass, 'rate_limit')
+      assert.equal(first.waitMs, 45_000)
     }
     assert.ok(events.some((event) => event.type === 'text_delta'))
     assert.equal(events.at(-1)?.type, 'done')

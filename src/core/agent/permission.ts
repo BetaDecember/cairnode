@@ -36,6 +36,14 @@ export class PermissionBroker {
     return !this.isAutoAllowed(request)
   }
 
+  /**
+   * Plan mode is read-only. Mutating tools are refused outright rather than
+   * prompted, because a prompt would imply the action can be approved.
+   */
+  isBlockedByMode(request: PermissionRequest): boolean {
+    return this.mode === 'plan' && request.risk !== 'low'
+  }
+
   async check(request: PermissionRequest): Promise<boolean> {
     if (this.isAutoAllowed(request)) return true
 

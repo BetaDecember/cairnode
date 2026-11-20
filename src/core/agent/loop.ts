@@ -482,6 +482,25 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           summary: request.summary,
         }
 
+        if (broker.isBlockedByMode(request)) {
+          const content = `Plan mode is read-only. ${request.tool} was not run. Switch modes to make changes.`
+          yield {
+            type: 'tool_result',
+            id: call.id,
+            ok: false,
+            content: [{ type: 'text', text: content }],
+          }
+          await append({
+            role: 'tool',
+            toolName: call.name,
+            toolCallId: call.id,
+            ok: false,
+            content,
+          })
+          yield { type: 'session_state', state: 'working' }
+          continue
+        }
+
         if (broker.requiresApproval(request)) {
           yield { type: 'session_state', state: 'awaiting_permission' }
           yield {

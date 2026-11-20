@@ -170,6 +170,44 @@ describe('runAgent', () => {
     await assert.rejects(fs.stat(path.join(cwd, 'marker.txt')), 'the denied command never ran')
   })
 
+  it('refuses mutations in plan mode without prompting', async () => {
+    const cwd = await fixture({ 'a.txt': 'hello\n' })
+
+    const provider = scripted([
+      [{ type: 'tool_call', id: 'c1', name: 'Write', input: { path: 'new.txt', content: 'x' } }],
+      [{ type: 'text', text: 'Plan only.' }],
+    ])
+
+    let prompts = 0
+    const events = await collect(
+      runAgent({
+        ...base,
+        cwd,
+        provider,
+        mode: 'plan',
+        ask: async () => {
+          prompts++
+          return 'allow_once'
+        },
+      }),
+    )
+
+    assert.equal(prompts, 0, 'plan mode never asks to approve a mutation')
+    assert.equal(
+      events.some((event) => event.type === 'permission_request'),
+      false,
+    )
+
+    const result = events.find((event) => event.type === 'tool_result')
+    assert.ok(result, 'the model is told the write was refused')
+    if (result?.type === 'tool_result') {
+      assert.equal(result.ok, false)
+      assert.match(JSON.stringify(result.content), /Plan mode is read-only/)
+    }
+
+    await assert.rejects(fs.stat(path.join(cwd, 'new.txt')), 'nothing was written')
+  })
+
   it('does not prompt for low-risk tools', async () => {
     const cwd = await fixture({ 'a.txt': 'hello\n' })
 

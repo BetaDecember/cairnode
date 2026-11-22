@@ -27,6 +27,8 @@ export type Block =
       id: string
       tool: string
       command: string
+      /** The untruncated call text, shown instead of `command` when present. */
+      detail?: string
       risk: RiskLevel
       resolved?: 'allowed' | 'denied'
     }

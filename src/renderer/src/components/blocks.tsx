@@ -216,12 +216,14 @@ function PermissionCard({
   id,
   tool,
   command,
+  detail,
   risk,
   resolved,
 }: {
   id: string
   tool: string
   command: string
+  detail?: string
   risk: 'low' | 'medium' | 'high'
   resolved?: 'allowed' | 'denied'
 }) {
@@ -258,11 +260,17 @@ function PermissionCard({
       <pre
         className={cn(
           mono,
-          'my-2 overflow-x-auto rounded-control border border-line bg-panel px-2.5 py-2 text-ink',
+          'my-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-control border border-line bg-panel px-2.5 py-2 text-ink',
         )}
       >
-        {command}
+        {detail ?? command}
       </pre>
+      {tool === 'Bash' && (
+        <p className="mb-2 text-[11.5px] leading-relaxed text-ink-muted">
+          Bash runs with your user&rsquo;s permissions. It can read or write anything you
+          can, including outside this project, and it can reach the network.
+        </p>
+      )}
       {!resolved && (
         <div className="flex items-center gap-2">
           <button
@@ -277,7 +285,7 @@ function PermissionCard({
             onClick={() => void respond(id, 'allow_session')}
             className="rounded-control border border-line bg-panel px-2.5 py-1 text-[12px] font-medium text-ink transition-colors hover:bg-panel-2"
           >
-            Allow for session
+            Allow all {tool} for this session
           </button>
           <button
             type="button"
@@ -387,6 +395,7 @@ export function BlockView({ block }: { block: Block }) {
           id={block.id}
           tool={block.tool}
           command={block.command}
+          detail={block.detail}
           risk={block.risk}
           resolved={block.resolved}
         />

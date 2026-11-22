@@ -86,8 +86,9 @@ const cases: Array<{ label: string; note?: string; block: Block }> = [
       type: 'permission',
       id: 'g5',
       tool: 'Bash',
-      command: 'git add src/api/routes/health.ts',
-      risk: 'medium',
+      command: '$ npm test > ../test.log 2>&1',
+      detail: 'npm test -- --grep "health" > ../test.log 2>&1',
+      risk: 'high',
     },
   },
   {

@@ -8,6 +8,21 @@ import type { Tool, ToolContext, ToolResult } from './types.ts'
 
 const MAX_READ_BYTES = 1_000_000
 const MAX_GREP_FILES = 2_000
+/** Long enough for any real command; the tail is marked when this is exceeded. */
+const MAX_PERMISSION_DETAIL = 8_000
+
+/** Used by the mutating file tools to fail before a permission card is shown. */
+function pathError(
+  input: Record<string, unknown>,
+  context: Pick<ToolContext, 'cwd'>,
+): string | null {
+  try {
+    resolveWithin(context.cwd, String(input['path'] ?? ''))
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : 'Path is outside the project.'
+  }
+}
 
 /* -------------------------------------------------------------------- Read */
 
@@ -57,6 +72,7 @@ const write: Tool = {
   name: 'Write',
   description: 'Create or overwrite a file with the given content.',
   risk: 'medium',
+  validate: pathError,
   summarize(input) {
     const content = String(input['content'] ?? '')
     return `${String(input['path'] ?? '?')} (${content.split('\n').length} lines)`
@@ -95,6 +111,7 @@ const edit: Tool = {
   name: 'Edit',
   description: 'Replace an exact string in a file. old_string must match exactly once.',
   risk: 'medium',
+  validate: pathError,
   summarize(input) {
     return String(input['path'] ?? '?')
   },
@@ -160,6 +177,11 @@ const bash: Tool = {
   risk: 'high',
   summarize(input) {
     return `$ ${String(input['command'] ?? '').slice(0, 160)}`
+  },
+  permissionDetail(input) {
+    const command = String(input['command'] ?? '')
+    if (command.length <= MAX_PERMISSION_DETAIL) return command
+    return `${command.slice(0, MAX_PERMISSION_DETAIL)}\n… ${command.length - MAX_PERMISSION_DETAIL} more characters not shown …`
   },
   parameters: {
     type: 'object',

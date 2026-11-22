@@ -170,6 +170,85 @@ describe('runAgent', () => {
     await assert.rejects(fs.stat(path.join(cwd, 'marker.txt')), 'the denied command never ran')
   })
 
+  it('shows the full Bash command when the summary would truncate it', async () => {
+    const cwd = await fixture({})
+    const command = `echo ${'a'.repeat(200)} > ../outside.txt`
+
+    const provider = scripted([
+      [{ type: 'tool_call', id: 'c1', name: 'Bash', input: { command } }],
+      [{ type: 'text', text: 'Stopped.' }],
+    ])
+
+    const events = await collect(
+      runAgent({
+        ...base,
+        cwd,
+        provider,
+        mode: 'default',
+        ask: async () => 'deny',
+      }),
+    )
+
+    const request = events.find((event) => event.type === 'permission_request')
+    assert.ok(request, 'the command needs approval')
+    if (request?.type === 'permission_request') {
+      assert.equal(request.detail, command, 'the card carries the untruncated command')
+      assert.ok(request.summary.length < command.length, 'the transcript summary stays short')
+    }
+  })
+
+  it('refuses an out-of-scope write before asking for permission', async () => {
+    const cwd = await fixture({ 'README.md': '# fixture\n' })
+    const name = `${path.basename(cwd)}-escape.txt`
+    const outside = path.join(cwd, '..', name)
+    await fs.rm(outside, { force: true })
+
+    const provider = scripted([
+      [
+        {
+          type: 'tool_call',
+          id: 'c1',
+          name: 'Write',
+          input: { path: `../${name}`, content: 'pwned' },
+        },
+      ],
+      [{ type: 'text', text: 'Understood.' }],
+    ])
+
+    let prompts = 0
+    const events = await collect(
+      runAgent({
+        ...base,
+        cwd,
+        provider,
+        mode: 'default',
+        ask: async () => {
+          prompts += 1
+          return 'allow_once'
+        },
+      }),
+    )
+
+    assert.equal(prompts, 0, 'the user was not asked to approve an impossible write')
+    assert.equal(
+      events.some((event) => event.type === 'permission_request'),
+      false,
+      'no permission card appeared',
+    )
+
+    const result = events.find((event) => event.type === 'tool_result')
+    assert.ok(result, 'the model is told why the write did not run')
+    if (result?.type === 'tool_result') {
+      assert.equal(result.ok, false)
+      assert.match(JSON.stringify(result.content), /outside the project/)
+    }
+
+    await assert.rejects(fs.stat(outside), 'nothing was written outside the project')
+
+    const toolMessage = provider.requests[1]?.messages.find((message) => message.role === 'tool')
+    assert.match(toolMessage?.content ?? '', /outside the project/)
+  })
+
   it('refuses mutations in plan mode without prompting', async () => {
     const cwd = await fixture({ 'a.txt': 'hello\n' })
 

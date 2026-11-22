@@ -4,6 +4,8 @@ export interface PermissionRequest {
   id: string
   tool: string
   summary: string
+  /** The full call text when the summary truncates it, such as a long Bash command. */
+  detail?: string
   risk: RiskLevel
 }
 

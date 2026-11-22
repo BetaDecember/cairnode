@@ -81,6 +81,20 @@ become attachment chips under the composer, and the `×` on a chip removes the t
 prompt carries paths only; the model reads a file through the normal `Read` tool when it
 needs the contents, subject to the same permission gate.
 
+## Tools and scope
+
+The seven tools work in the session's project folder. `Read`, `Write`, and `Edit` resolve
+a path inside that folder, and an out-of-scope `Write` or `Edit` is refused before a
+permission card appears. `Grep` and `Glob` only search that folder. The path check is
+lexical: a symlink inside the project is followed, so review writes that pass through
+one.
+
+`Bash` is different. An approved command is a real shell running as you: it can read or
+write anything your user can, including paths outside the project, and it can reach the
+network. The permission card shows the full command and says so. **Allow all Bash for
+this session** removes the prompt for every later command in that session, so read the
+command before choosing it.
+
 ## Sessions and crashes
 
 Sessions are append-only JSONL under `~/Library/Application Support/recode/sessions`. If

@@ -225,6 +225,7 @@ export function reduce(fold: Fold, event: AgentEvent): Fold {
           id: event.id,
           tool: event.tool,
           command: event.summary,
+          detail: event.detail,
           risk: event.risk,
         },
       ])

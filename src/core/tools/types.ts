@@ -26,8 +26,16 @@ export interface Tool {
   parameters: Record<string, unknown>
   /** Drives the permission prompt's default treatment. */
   risk: RiskLevel
-  /** One line describing the specific call, shown in the permission prompt. */
+  /** One line describing the specific call, shown in the transcript. */
   summarize(input: Record<string, unknown>): string
+  /** Full text for the permission card when `summarize` would hide part of the call. */
+  permissionDetail?(input: Record<string, unknown>): string
+  /**
+   * Refuse a call before the permission card appears. Returns an error message,
+   * or null when the call can proceed. `execute` still validates: this hook is
+   * for feedback, not the boundary itself.
+   */
+  validate?(input: Record<string, unknown>, context: Pick<ToolContext, 'cwd'>): string | null
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
 }
 

@@ -494,6 +494,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           id: randomUUID(),
           tool: call.name,
           summary: summarizeCall(tool, call.name, call.input),
+          detail: tool.permissionDetail?.(call.input),
           risk: tool.risk,
         }
 
@@ -503,6 +504,27 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
           name: call.name,
           input: call.input,
           summary: request.summary,
+        }
+
+        // Refuse an impossible call before the permission card, not after the
+        // user has approved something that could never run.
+        const invalid = tool.validate?.(call.input, { cwd: options.cwd })
+        if (invalid) {
+          yield {
+            type: 'tool_result',
+            id: call.id,
+            ok: false,
+            content: [{ type: 'text', text: invalid }],
+          }
+          await append({
+            role: 'tool',
+            toolName: call.name,
+            toolCallId: call.id,
+            ok: false,
+            content: invalid,
+          })
+          yield { type: 'session_state', state: 'working' }
+          continue
         }
 
         if (broker.isBlockedByMode(request)) {
@@ -531,6 +553,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
             id: request.id,
             tool: request.tool,
             summary: request.summary,
+            detail: request.detail,
             risk: request.risk,
           }
         }

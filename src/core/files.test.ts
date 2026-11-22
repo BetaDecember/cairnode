@@ -6,7 +6,7 @@ import path from 'node:path'
 import { listProjectFiles } from './files.ts'
 
 async function project(files: Record<string, string>): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-files-'))
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-files-'))
   for (const [name, content] of Object.entries(files)) {
     const target = path.join(root, name)
     await fs.mkdir(path.dirname(target), { recursive: true })

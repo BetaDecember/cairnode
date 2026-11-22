@@ -75,7 +75,7 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-canvas text-ink">
       <TitleBar
-        title={booted ? title : 'recode'}
+        title={booted ? title : 'Cairnode'}
         cwd={cwd}
         theme={theme}
         view={view}

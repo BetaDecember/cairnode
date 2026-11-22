@@ -4,7 +4,7 @@ import type {
   ChatCompactInput,
   ChatSendInput,
   PermissionRespondInput,
-  RecodeApi,
+  CairnodeApi,
 } from '../core/api'
 import type { SettingsPatch } from '../core/settings'
 
@@ -14,7 +14,7 @@ import type { SettingsPatch } from '../core/settings'
  * Nothing here takes a path or a command directly — the renderer names
  * operations, and main validates and performs them.
  */
-const api: RecodeApi = {
+const api: CairnodeApi = {
   info: () => ipcRenderer.invoke('app:info'),
 
   models: () => ipcRenderer.invoke('models:list'),

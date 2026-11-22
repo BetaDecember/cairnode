@@ -43,7 +43,7 @@ async function waitForExit(pid: number, timeoutMs = 5_000): Promise<boolean> {
 
 describe('Bash tool', () => {
   it('kills the detached process group when the run is aborted', async () => {
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-bash-'))
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-bash-'))
     const pidFile = path.join(cwd, 'child.pid')
     const controller = new AbortController()
 

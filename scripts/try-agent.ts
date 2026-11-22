@@ -110,7 +110,7 @@ function dryProvider(): Provider {
 /* -------------------------------------------------------------------- main */
 
 async function main(): Promise<number> {
-  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-agent-'))
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-agent-'))
   for (const [name, content] of Object.entries(FIXTURE)) {
     const target = path.join(cwd, name)
     await fs.mkdir(path.dirname(target), { recursive: true })

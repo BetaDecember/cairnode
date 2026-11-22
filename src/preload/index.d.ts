@@ -1,8 +1,8 @@
-import type { RecodeApi } from './index'
+import type { CairnodeApi } from './index'
 
 declare global {
   interface Window {
-    api: RecodeApi
+    api: CairnodeApi
   }
 }
 

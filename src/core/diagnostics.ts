@@ -148,7 +148,7 @@ export interface DiagnosticsSessionSummary extends DiagnosticsSessionInput {
 }
 
 export interface DiagnosticsReport {
-  format: 'recode-diagnostics'
+  format: 'cairnode-diagnostics'
   formatVersion: 1
   generatedAt: string
   note: string
@@ -188,7 +188,7 @@ const NOTE =
 
 export function buildDiagnosticsReport(input: DiagnosticsInput): DiagnosticsReport {
   return {
-    format: 'recode-diagnostics',
+    format: 'cairnode-diagnostics',
     formatVersion: 1,
     generatedAt: input.generatedAt,
     note: NOTE,

@@ -23,11 +23,11 @@ import {
 type Theme = 'light' | 'dark'
 type View = 'app' | 'gallery'
 
-const THEME_KEY = 'recode.theme'
-const PROVIDER_KEY = 'recode.provider'
-const MODEL_KEY_PREFIX = 'recode.model.'
+const THEME_KEY = 'cairnode.theme'
+const PROVIDER_KEY = 'cairnode.provider'
+const MODEL_KEY_PREFIX = 'cairnode.model.'
 /** Written by versions that only knew about Ollama. */
-const LEGACY_MODEL_KEY = 'recode.model'
+const LEGACY_MODEL_KEY = 'cairnode.model'
 const FALLBACK_MODEL = 'qwen3.5:4b'
 const NO_MODELS_NOTICE = 'No models found. Check Settings.'
 

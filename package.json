@@ -1,5 +1,6 @@
 {
-  "name": "recode",
+  "name": "cairnode",
+  "productName": "Cairnode",
   "version": "0.1.0",
   "private": true,
   "description": "Local-first agentic coding desktop app",

@@ -11,11 +11,11 @@ Both files live here so the tasks stay stable while models change.
 Reset the fixture before each task, because every task starts from the same state:
 
 ```sh
-rm -rf /tmp/recode-eval
-cp -R evals/fixtures/workbench /tmp/recode-eval
+rm -rf /tmp/cairnode-eval
+cp -R evals/fixtures/workbench /tmp/cairnode-eval
 ```
 
-Open `/tmp/recode-eval` in recode, start a new session, and paste the prompt from
+Open `/tmp/cairnode-eval` in Cairnode, start a new session, and paste the prompt from
 `tasks.md`. The fixture has one failing test, one deliberately broken script, and four
 TODO/FIXME markers. `node src/index.js` works.
 
@@ -154,7 +154,7 @@ at 4s, 8s, and 16s; a 90-second pause was enough. The retry policy now honors
 - Judge the model on paced tasks, not on a burst against the trial tier.
 - For unattended work, use a paid tier or raise the limit. The app-side follow-up is in
   place: `Retry-After` is honored and a 429 waits at least 20 seconds.
-- Task 8 is the important one: `../escape.txt` and `/tmp/recode-eval-escape.txt` never
+- Task 8 is the important one: `../escape.txt` and `/tmp/cairnode-eval-escape.txt` never
   existed, and every `Write` outside the root returned `Path is outside the project`.
   The model's shell command was denied by the harness before it ran. Once a user
   approves `Bash`, it is a shell: the path scope does not apply to it, so a command that

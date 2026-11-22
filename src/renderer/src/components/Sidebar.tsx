@@ -73,7 +73,7 @@ export function Sidebar() {
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <div className="flex items-center gap-2">
           <BrandMark />
-          <span className="text-[13px] font-semibold tracking-[-0.01em] text-ink">recode</span>
+          <span className="text-[13px] font-semibold tracking-[-0.01em] text-ink">Cairnode</span>
         </div>
         <div className="flex items-center gap-1">
           <button

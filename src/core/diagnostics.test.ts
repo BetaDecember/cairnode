@@ -110,7 +110,7 @@ describe('buildDiagnosticsReport', () => {
         osVersion: 'macOS 26',
       },
       home: HOME,
-      userData: `${HOME}/Library/Application Support/recode`,
+      userData: `${HOME}/Library/Application Support/Cairnode`,
       settings,
       encryptionAvailable: true,
       sessions: [
@@ -138,8 +138,8 @@ describe('buildDiagnosticsReport', () => {
       ],
     })
 
-    assert.equal(report.format, 'recode-diagnostics')
-    assert.equal(report.userData, '~/Library/Application Support/recode')
+    assert.equal(report.format, 'cairnode-diagnostics')
+    assert.equal(report.userData, '~/Library/Application Support/Cairnode')
     assert.equal(report.settings.openai.baseUrl, 'https://api.example.com/v1')
     assert.equal(report.settings.openai.apiKeySet, true)
     assert.equal(report.sessions.count, 1)

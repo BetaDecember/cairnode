@@ -14,7 +14,7 @@ function createWindow(agentHost: Host): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    title: 'recode',
+    title: 'Cairnode',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 18, y: 20 },
     backgroundColor: '#faf9f6',

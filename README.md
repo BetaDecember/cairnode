@@ -1,4 +1,4 @@
-# recode
+# Cairnode
 
 A local-first agentic coding app for macOS. Runs real coding tasks against a model on
 your own machine, with a transcript you can read: streaming text, native reasoning,
@@ -97,7 +97,7 @@ command before choosing it.
 
 ## Sessions and crashes
 
-Sessions are append-only JSONL under `~/Library/Application Support/recode/sessions`. If
+Sessions are append-only JSONL under `~/Library/Application Support/Cairnode/sessions`. If
 the app stops mid-turn, the session still loads: a tool call whose result never arrived is
 dropped so the conversation stays valid, and the composer shows that the last turn did not
 finish. Nothing runs automatically. The next message continues from the stored history.
@@ -120,7 +120,7 @@ instructions to reveal secrets or bypass a rule as untrusted.
   main re-reads the files before a trust click so a change between display and click
   cannot be trusted unseen.
 
-Trust lives in `~/Library/Application Support/recode/trust.json` (mode `0600`), separate
+Trust lives in `~/Library/Application Support/Cairnode/trust.json` (mode `0600`), separate
 from settings. It is keyed by resolved directory and holds the reviewed fingerprint plus
 the time it was granted.
 

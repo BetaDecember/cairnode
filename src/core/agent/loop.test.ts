@@ -29,7 +29,7 @@ function scripted(scripts: ProviderEvent[][]): Provider & { requests: ChatReques
 }
 
 async function fixture(files: Record<string, string>): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-loop-'))
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-loop-'))
   for (const [name, content] of Object.entries(files)) {
     const target = path.join(dir, name)
     await fs.mkdir(path.dirname(target), { recursive: true })

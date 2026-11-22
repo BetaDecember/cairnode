@@ -9,7 +9,7 @@ const PRINT_A = 'a'.repeat(64)
 const PRINT_B = 'b'.repeat(64)
 
 async function temp(): Promise<string> {
-  return await fs.mkdtemp(path.join(os.tmpdir(), 'recode-trust-'))
+  return await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-trust-'))
 }
 
 describe('trustState', () => {

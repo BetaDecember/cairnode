@@ -1,5 +1,5 @@
 {
-  "name": "recode-eval-workbench",
+  "name": "cairnode-eval-workbench",
   "private": true,
   "type": "module",
   "scripts": {

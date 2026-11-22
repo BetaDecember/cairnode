@@ -79,7 +79,7 @@ export interface DiagnosticsExport {
   path: string
 }
 
-export interface RecodeApi {
+export interface CairnodeApi {
   info(): Promise<AppInfo>
   models(): Promise<ModelInfo[]>
   settings: {

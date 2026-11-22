@@ -256,7 +256,7 @@ export function registerIpc(): AgentHost {
     const options = {
       title: 'Export diagnostics',
       buttonLabel: 'Export',
-      defaultPath: join(app.getPath('downloads'), `recode-diagnostics-${stamp}.json`),
+      defaultPath: join(app.getPath('downloads'), `cairnode-diagnostics-${stamp}.json`),
       filters: [{ name: 'JSON', extensions: ['json'] }],
     }
     // Attach the sheet to the window that asked for it; an app-modal panel

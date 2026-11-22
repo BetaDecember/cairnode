@@ -6,7 +6,7 @@ import path from 'node:path'
 import { SessionStore, endsMidTurn, titleFromText } from './session.ts'
 
 async function store(): Promise<{ sessions: SessionStore; root: string }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'recode-sessions-'))
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-sessions-'))
   return { sessions: new SessionStore(root), root }
 }
 
@@ -327,7 +327,7 @@ describe('SessionStore', () => {
   })
 
   it('returns no sessions for a directory that does not exist yet', async () => {
-    const sessions = new SessionStore(path.join(os.tmpdir(), 'recode-missing-dir-xyz'))
+    const sessions = new SessionStore(path.join(os.tmpdir(), 'cairnode-missing-dir-xyz'))
     assert.deepEqual(await sessions.list(), [])
   })
 })

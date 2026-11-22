@@ -1,8 +1,8 @@
-import type { RecodeApi } from '../../core/api.ts'
+import type { CairnodeApi } from '../../core/api.ts'
 
 declare global {
   interface Window {
-    api: RecodeApi
+    api: CairnodeApi
   }
 }
 

@@ -11,7 +11,7 @@ import {
 } from './memory.ts'
 
 async function project(): Promise<string> {
-  return await fs.mkdtemp(path.join(os.tmpdir(), 'recode-memory-'))
+  return await fs.mkdtemp(path.join(os.tmpdir(), 'cairnode-memory-'))
 }
 
 describe('loadProjectMemory', () => {

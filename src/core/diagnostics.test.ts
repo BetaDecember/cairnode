@@ -10,7 +10,7 @@ import {
 } from './diagnostics.ts'
 import type { Settings } from './settings.ts'
 
-const HOME = '/Users/johnty'
+const HOME = '/Users/dev'
 
 describe('redactUrl', () => {
   it('keeps the origin and path but drops credentials, query, and fragment', () => {

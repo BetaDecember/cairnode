@@ -40,7 +40,9 @@ The model picker groups models by provider.
   discovered and probed for tool support.
 - **OpenAI-compatible** — enable it in Settings (gear, top right), set the base URL
   **including** `/v1`, and list the model ids to offer. An API key is optional; when set,
-  it is encrypted with the OS keychain and never reaches the renderer.
+  it is encrypted with the OS keychain and never reaches the renderer. NVIDIA NIM is one
+  hosted option at `https://integrate.api.nvidia.com/v1`; the eval notes use
+  `nvidia/nemotron-3-ultra-550b-a55b` as the hosted default.
 
 Each provider has its own context window. For Ollama that number is sent as `num_ctx` on
 every run. Chat Completions has no portable context setting, so for OpenAI-compatible
@@ -183,13 +185,13 @@ with Zod in the main process.
   checks. `pnpm test:ui` screenshots it in both themes. The baselines belong to this
   project; nothing is compared against screenshots of another app. Delete a baseline and
   rerun with `--update-snapshots` when a visual change is intentional.
+- Icons are original inline SVG. No icon package, no borrowed artwork.
 
 ## Evals
 
 `evals/` holds ten coding tasks run by hand against the fixture in `evals/fixtures`.
 They are the check for "is this model and configuration still usable", not a release gate.
 See `evals/README.md` for setup and the score sheet.
-- Icons are original inline SVG. No icon package, no borrowed artwork.
 
 ## Not affiliated
 

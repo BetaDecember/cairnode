@@ -3,8 +3,18 @@
   "productName": "Cairnode",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-first agentic coding desktop app",
+  "description": "Local-first agentic coding desktop app for macOS",
   "license": "MIT",
+  "author": "Cairnode contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BetaDecember/cairnode.git"
+  },
+  "homepage": "https://github.com/BetaDecember/cairnode#readme",
+  "bugs": "https://github.com/BetaDecember/cairnode/issues",
+  "engines": {
+    "node": ">=24"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

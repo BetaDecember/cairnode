@@ -35,7 +35,10 @@ export interface Tool {
    * or null when the call can proceed. `execute` still validates: this hook is
    * for feedback, not the boundary itself.
    */
-  validate?(input: Record<string, unknown>, context: Pick<ToolContext, 'cwd'>): string | null
+  validate?(
+    input: Record<string, unknown>,
+    context: Pick<ToolContext, 'cwd'>,
+  ): string | null | Promise<string | null>
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
 }
 

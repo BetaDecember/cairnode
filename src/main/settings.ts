@@ -2,7 +2,9 @@ import { app, safeStorage } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import {
+  keySurvivesUpdate,
   normalizeSettings,
+  originOf,
   type OllamaSettings,
   type Settings,
   type SettingsPatch,
@@ -24,12 +26,14 @@ interface FileSettings {
     /** Base64 ciphertext when `keyEncrypted`, plaintext only if hand-written. */
     apiKey?: string
     keyEncrypted?: boolean
+    /** Origin the key was entered for; absent on files written before binding. */
+    apiKeyOrigin?: string
   }
 }
 
 export interface InternalSettings {
   ollama: OllamaSettings
-  openai: StoredSettings['openai'] & { apiKey: string }
+  openai: StoredSettings['openai'] & { apiKey: string; apiKeyOrigin: string | null }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -41,6 +45,8 @@ export class SettingsStore {
   private state: FileSettings | null = null
   /** Used only when the OS cannot encrypt; empty otherwise. */
   private memoryKey = ''
+  /** Origin the in-memory key was entered for. */
+  private memoryOrigin = ''
 
   constructor(file = path.join(app.getPath('userData'), 'settings.json')) {
     this.file = file
@@ -49,16 +55,21 @@ export class SettingsStore {
   /** The renderer-facing shape: key presence, never the key. */
   async read(): Promise<Settings> {
     const internal = await this.internal()
-    const { apiKey, ...openai } = internal.openai
+    const { apiKey, apiKeyOrigin, ...openai } = internal.openai
     return {
       ollama: { ...internal.ollama },
-      openai: { ...openai, apiKeySet: apiKey.length > 0 },
+      openai: {
+        ...openai,
+        apiKeySet: apiKey.length > 0,
+        apiKeyOrigin: apiKey.length > 0 ? apiKeyOrigin : null,
+      },
     }
   }
 
   /** Main-only shape, including the decrypted key. */
   async internal(): Promise<InternalSettings> {
     const file = await this.load()
+    const key = this.readKey(file)
 
     return {
       ollama: { ...file.ollama },
@@ -67,7 +78,8 @@ export class SettingsStore {
         baseUrl: file.openai.baseUrl,
         models: [...file.openai.models],
         numCtx: file.openai.numCtx,
-        apiKey: this.decodeKey(file),
+        apiKey: key.value,
+        apiKeyOrigin: key.origin,
       },
     }
   }
@@ -83,31 +95,47 @@ export class SettingsStore {
       ollama: { ...current.ollama, ...(patch.ollama ?? {}) },
       openai: { ...current.openai, ...openaiPatch },
     })
+    const nextOrigin = originOf(merged.openai.baseUrl)
 
     const next: FileSettings = {
       ollama: merged.ollama,
       openai: { ...merged.openai },
     }
 
-    // Keep an existing key unless the patch replaces or clears it.
-    if (current.openai.apiKey) next.openai.apiKey = current.openai.apiKey
-    if (current.openai.keyEncrypted) next.openai.keyEncrypted = true
+    const hasKey = Boolean(current.openai.apiKey) || Boolean(this.memoryKey)
+    const currentOrigin =
+      current.openai.apiKeyOrigin ?? (this.memoryKey ? this.memoryOrigin || null : null)
+    const keepExisting = keySurvivesUpdate(
+      { hasKey, origin: currentOrigin, baseUrl: current.openai.baseUrl },
+      merged.openai.baseUrl,
+    )
 
     if (apiKey === null) {
-      delete next.openai.apiKey
-      delete next.openai.keyEncrypted
-      this.memoryKey = ''
+      this.clearMemoryKey()
     } else if (typeof apiKey === 'string' && apiKey.trim()) {
       const key = apiKey.trim()
       if (safeStorage.isEncryptionAvailable()) {
         next.openai.apiKey = safeStorage.encryptString(key).toString('base64')
         next.openai.keyEncrypted = true
-        this.memoryKey = ''
+        if (nextOrigin) next.openai.apiKeyOrigin = nextOrigin
+        this.clearMemoryKey()
       } else {
         delete next.openai.apiKey
         delete next.openai.keyEncrypted
         this.memoryKey = key
+        this.memoryOrigin = nextOrigin ?? ''
       }
+    } else if (keepExisting && current.openai.apiKey) {
+      // No new key, same origin: keep the stored ciphertext.
+      next.openai.apiKey = current.openai.apiKey
+      if (current.openai.keyEncrypted) next.openai.keyEncrypted = true
+      if (nextOrigin) next.openai.apiKeyOrigin = nextOrigin
+    } else if (keepExisting && this.memoryKey) {
+      this.memoryOrigin = nextOrigin ?? ''
+    } else if (hasKey) {
+      // The endpoint moved without a new key: drop the old secret rather than
+      // forwarding it to a different host.
+      this.clearMemoryKey()
     }
 
     this.state = next
@@ -129,8 +157,24 @@ export class SettingsStore {
     const normalized = normalizeSettings(raw)
     const record = isRecord(raw) ? raw : {}
     const openaiRaw = isRecord(record['openai']) ? record['openai'] : {}
-    const storedKey = typeof openaiRaw['apiKey'] === 'string' ? openaiRaw['apiKey'] : undefined
+    let storedKey = typeof openaiRaw['apiKey'] === 'string' ? openaiRaw['apiKey'] : undefined
     const encrypted = openaiRaw['keyEncrypted'] === true
+    const baseOrigin = originOf(normalized.openai.baseUrl)
+    let keyOrigin =
+      typeof openaiRaw['apiKeyOrigin'] === 'string' ? openaiRaw['apiKeyOrigin'] : undefined
+
+    if (storedKey) {
+      if (!keyOrigin) {
+        // Files written before origin binding: trust the endpoint they were
+        // saved with, so an upgrade does not force every key to be re-entered.
+        keyOrigin = baseOrigin ?? undefined
+      } else if (keyOrigin !== baseOrigin) {
+        // A hand-edited or stale file points the key at another host.
+        storedKey = undefined
+        keyOrigin = undefined
+        this.clearMemoryKey()
+      }
+    }
 
     this.state = {
       ollama: normalized.ollama,
@@ -138,22 +182,38 @@ export class SettingsStore {
         ...normalized.openai,
         ...(storedKey ? { apiKey: storedKey } : {}),
         ...(encrypted && storedKey ? { keyEncrypted: true } : {}),
+        ...(keyOrigin && storedKey ? { apiKeyOrigin: keyOrigin } : {}),
       },
     }
     return this.state
   }
 
-  private decodeKey(file: FileSettings): string {
-    if (!file.openai.apiKey) return this.memoryKey
-    if (!file.openai.keyEncrypted) return file.openai.apiKey
+  /** Decrypt the file key, or use the in-memory fallback when it is still bound. */
+  private readKey(file: FileSettings): { value: string; origin: string | null } {
+    const baseOrigin = originOf(file.openai.baseUrl)
 
-    try {
-      return safeStorage.decryptString(Buffer.from(file.openai.apiKey, 'base64'))
-    } catch {
-      // The keychain entry changed or moved. Treat the key as missing rather
-      // than failing every run.
-      return this.memoryKey
+    if (file.openai.apiKey) {
+      const origin = file.openai.apiKeyOrigin ?? baseOrigin
+      if (!file.openai.keyEncrypted) return { value: file.openai.apiKey, origin }
+      try {
+        return {
+          value: safeStorage.decryptString(Buffer.from(file.openai.apiKey, 'base64')),
+          origin,
+        }
+      } catch {
+        // The keychain entry changed or moved. Fall through to the memory key.
+      }
     }
+
+    if (this.memoryKey && this.memoryOrigin === baseOrigin) {
+      return { value: this.memoryKey, origin: this.memoryOrigin }
+    }
+    return { value: '', origin: null }
+  }
+
+  private clearMemoryKey(): void {
+    this.memoryKey = ''
+    this.memoryOrigin = ''
   }
 
   private async write(next: FileSettings): Promise<void> {

@@ -21,6 +21,8 @@ export interface OpenAISettings {
   numCtx: number
   /** True when a key is stored. The key itself never crosses IPC. */
   apiKeySet: boolean
+  /** Origin the stored key is bound to; null when no key is stored. */
+  apiKeyOrigin: string | null
 }
 
 export interface Settings {
@@ -32,7 +34,7 @@ export type ProviderId = 'ollama' | 'openai'
 
 export interface StoredSettings {
   ollama: OllamaSettings
-  openai: Omit<OpenAISettings, 'apiKeySet'>
+  openai: Omit<OpenAISettings, 'apiKeySet' | 'apiKeyOrigin'>
 }
 
 export interface SettingsPatch {
@@ -57,6 +59,7 @@ export const DEFAULT_SETTINGS: Settings = {
     models: [],
     numCtx: DEFAULT_NUM_CTX,
     apiKeySet: false,
+    apiKeyOrigin: null,
   },
 }
 
@@ -82,6 +85,65 @@ export function normalizeBaseUrl(value: unknown): string | null {
 export function normalizeNumCtx(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   return Math.min(MAX_NUM_CTX, Math.max(MIN_NUM_CTX, Math.round(value)))
+}
+
+/** Scheme, host, and port. A path change alone keeps the same origin. */
+export function originOf(value: string): string | null {
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
+
+/** Loopback names and addresses are safe enough for plain HTTP on a laptop. */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  if (host === '::1') return true
+
+  // Only a literal 127.0.0.0/8 address counts. A name such as
+  // `127.0.0.1.evil.com` resolves wherever its owner wants it to.
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (!match) return false
+  const octets = match.slice(1).map(Number)
+  if (octets.some((octet) => octet > 255)) return false
+  return octets[0] === 127
+}
+
+/**
+ * A key must not cross a plaintext network hop. Loopback is the exception:
+ * local servers commonly run HTTP and the traffic never leaves the machine.
+ */
+export function keyEndpointError(baseUrl: string): string | null {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    return 'The base URL is not valid.'
+  }
+  if (url.protocol === 'http:' && !isLoopbackHost(url.hostname)) {
+    return 'Refusing to send an API key over plain HTTP to a non-local host. Use HTTPS or a loopback address.'
+  }
+  return null
+}
+
+/**
+ * Decide whether a stored key may survive a settings update.
+ *
+ * A key is bound to the origin it was entered for. Changing the endpoint
+ * without supplying a new key clears it instead of forwarding the secret to a
+ * different host.
+ */
+export function keySurvivesUpdate(
+  current: { hasKey: boolean; origin: string | null; baseUrl: string },
+  nextBaseUrl: string,
+): boolean {
+  if (!current.hasKey) return false
+  const nextOrigin = originOf(nextBaseUrl)
+  if (!nextOrigin) return false
+  const currentOrigin = current.origin ?? originOf(current.baseUrl)
+  return currentOrigin === nextOrigin
 }
 
 export function normalizeModels(value: unknown): string[] {

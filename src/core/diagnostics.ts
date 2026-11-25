@@ -57,6 +57,11 @@ export class DiagnosticsLog {
 const URL_PATTERN = /\bhttps?:\/\/[^\s"'<>]+/g
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi
 const API_KEY_PATTERN = /\bsk-[A-Za-z0-9_-]{8,}/g
+const NIM_KEY_PATTERN = /\bnv(?:api|cf)-[A-Za-z0-9_-]{8,}/g
+const AUTH_HEADER_PATTERN =
+  /\b(?:Authorization|Proxy-Authorization)\s*:\s*(?:[A-Za-z][A-Za-z0-9_-]*\s+)?[^\s"',;]+/gi
+const API_KEY_FIELD_PATTERN =
+  /\b(?:api[_-]?key|x-api-key)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}["']?/gi
 
 /** Keep the origin and path; drop credentials, query strings, and fragments. */
 function safeUrl(value: string): string {
@@ -76,20 +81,37 @@ export function redactUrl(value: string): string {
  * Replace the home directory, URL secrets, bearer tokens, and obvious API keys
  * anywhere in free-form text. Error details are the only place such text
  * appears in the report.
+ *
+ * `secrets` are exact values (such as the configured provider key) that may not
+ * match any known prefix. They are removed by value before the patterns run.
  */
-export function redactText(text: string, home: string): string {
+export function redactText(text: string, home: string, secrets: string[] = []): string {
   let next = text
 
   const normalizedHome = home.replace(/\/+$/, '')
   if (normalizedHome) next = next.split(normalizedHome).join('~')
+
+  const exact = [...new Set(secrets)]
+    .filter((secret) => secret.length >= 6)
+    .sort((a, b) => b.length - a.length)
+  for (const secret of exact) next = next.split(secret).join('[redacted]')
 
   next = next.replace(URL_PATTERN, (match) => {
     const trailing = /[.,;:)\]]+$/.exec(match)?.[0] ?? ''
     const url = trailing ? match.slice(0, -trailing.length) : match
     return `${safeUrl(url)}${trailing}`
   })
+  next = next.replace(AUTH_HEADER_PATTERN, (match) => {
+    const name = /^[^:]+/.exec(match)?.[0]?.trim() ?? 'Authorization'
+    return `${name}: [redacted]`
+  })
   next = next.replace(BEARER_PATTERN, 'Bearer [redacted]')
+  next = next.replace(API_KEY_FIELD_PATTERN, (match) => {
+    const name = /^[^:=]+/.exec(match)?.[0]?.trim() ?? 'api_key'
+    return `${name}=[redacted]`
+  })
   next = next.replace(API_KEY_PATTERN, 'sk-[redacted]')
+  next = next.replace(NIM_KEY_PATTERN, 'nv-[redacted]')
   return next
 }
 
@@ -179,12 +201,14 @@ export interface DiagnosticsInput {
   userData: string
   settings: Settings
   encryptionAvailable: boolean
+  /** Exact secret values to remove from event details, e.g. the stored key. */
+  secrets?: string[]
   sessions: DiagnosticsSessionInput[]
   events: DiagnosticEvent[]
 }
 
 const NOTE =
-  'No telemetry. This file was produced on request. It contains app and machine versions, redacted endpoint configuration, per-session message counts, and recent run lifecycle events. It does not contain your prompts, tool output, or API keys; error messages may mention endpoints and short provider responses. Base URL credentials, query strings, and fragments are removed; project paths are shortened.'
+  'No telemetry. This file was produced on request. It contains app and machine versions, redacted endpoint configuration, per-session message counts, and recent run lifecycle events. It does not contain your prompts or tool output, and the configured provider API key is removed from event details; error messages may mention endpoints and short provider responses. Base URL credentials, query strings, and fragments are removed; project paths are shortened.'
 
 export function buildDiagnosticsReport(input: DiagnosticsInput): DiagnosticsReport {
   return {
@@ -219,7 +243,9 @@ export function buildDiagnosticsReport(input: DiagnosticsInput): DiagnosticsRepo
     },
     events: input.events.map((event) => ({
       ...event,
-      ...(event.detail ? { detail: redactText(event.detail, input.home) } : {}),
+      ...(event.detail
+        ? { detail: redactText(event.detail, input.home, input.secrets ?? []) }
+        : {}),
     })),
   }
 }

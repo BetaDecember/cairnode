@@ -21,7 +21,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.json --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/core/**/*.test.ts\"",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/core/**/*.test.ts\" \"src/main/**/*.test.ts\"",
     "test:ui": "playwright test",
     "agent": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/try-agent.ts"
   },

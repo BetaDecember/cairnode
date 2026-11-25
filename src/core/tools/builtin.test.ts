@@ -226,6 +226,18 @@ describe('Glob and Grep containment', () => {
   })
 })
 
+describe('Bash permission detail', () => {
+  it('keeps a short command exact and marks a truncated one', () => {
+    const bash = tool('Bash')
+    assert.equal(bash.permissionDetail?.({ command: 'echo ok' }), 'echo ok')
+
+    const long = 'a'.repeat(8_001)
+    const detail = bash.permissionDetail?.({ command: long }) ?? ''
+    assert.match(detail, /1 more characters not shown/)
+    assert.ok(detail.length > 8_000)
+  })
+})
+
 describe('file tools still work inside the project', () => {
   it('reads, writes, edits, globs, and greps inside the root', async () => {
     const { base, project } = await workspace()

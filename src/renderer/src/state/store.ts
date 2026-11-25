@@ -157,8 +157,16 @@ async function ensureSession(get: () => AppState, set: (partial: Partial<AppStat
   const current = get().activeId
   if (current) return current
 
+  // A session is always rooted at a folder the user picked. If this is the
+  // first run, open the picker now instead of failing the send.
+  const cwd = get().cwd
+  if (!cwd) {
+    await get().chooseFolder()
+    return get().activeId
+  }
+
   try {
-    const meta = await window.api.sessions.create(get().cwd ?? undefined)
+    const meta = await window.api.sessions.create(cwd)
     resetIds()
     set({ activeId: meta.id, cwd: meta.cwd, fold: emptyFold(), retry: null, memory: null })
     await get().refreshSessions()

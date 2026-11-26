@@ -1,6 +1,7 @@
 import { OpenAIProvider } from '../core/provider/openai.ts'
 import { OllamaProvider } from '../core/provider/ollama.ts'
 import type { Provider } from '../core/provider/types.ts'
+import { keyEndpointError, originOf } from '../core/settings.ts'
 import type { InternalSettings } from './settings.ts'
 
 /**
@@ -14,6 +15,17 @@ export function providerFor(settings: InternalSettings, providerId: string): Pro
   if (providerId === 'openai') {
     if (!settings.openai.enabled) {
       throw new Error('The OpenAI-compatible provider is disabled in Settings.')
+    }
+    if (settings.openai.apiKey) {
+      const transport = keyEndpointError(settings.openai.baseUrl)
+      if (transport) throw new Error(transport)
+
+      const origin = originOf(settings.openai.baseUrl)
+      if (!origin || settings.openai.apiKeyOrigin !== origin) {
+        throw new Error(
+          'The stored API key is bound to a different endpoint. Re-enter it in Settings for this base URL.',
+        )
+      }
     }
     return new OpenAIProvider({
       baseUrl: settings.openai.baseUrl,

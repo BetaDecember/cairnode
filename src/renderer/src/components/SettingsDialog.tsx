@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import {
   MAX_NUM_CTX,
   MIN_NUM_CTX,
+  keyEndpointError,
+  originOf,
   type Settings,
   type SettingsPatch,
 } from '@core/settings'
@@ -101,6 +103,20 @@ function Dialog({
       .map((model) => model.trim())
       .filter(Boolean)
 
+    const nextOrigin = originOf(draft.openaiUrl.trim())
+    const keepsStored =
+      settings.openai.apiKeySet &&
+      !clearKey &&
+      nextOrigin !== null &&
+      nextOrigin === settings.openai.apiKeyOrigin
+    if (!clearKey && (Boolean(draft.apiKey.trim()) || keepsStored)) {
+      const transport = keyEndpointError(draft.openaiUrl.trim())
+      if (transport) {
+        setError(transport)
+        return
+      }
+    }
+
     const patch: SettingsPatch = {
       ollama: { baseUrl: draft.ollamaUrl.trim(), numCtx: ollamaCtx },
       openai: {
@@ -142,6 +158,13 @@ function Dialog({
   }
 
   const keyStored = settings.openai.apiKeySet && !clearKey
+  const draftOrigin = originOf(draft.openaiUrl)
+  const keyOrigin = settings.openai.apiKeyOrigin
+  const keyBoundElsewhere =
+    settings.openai.apiKeySet &&
+    keyOrigin !== null &&
+    draftOrigin !== null &&
+    draftOrigin !== keyOrigin
 
   return (
     <div
@@ -240,14 +263,28 @@ function Dialog({
 
               <Field
                 label="API key"
-                hint={keyStored ? 'stored in the OS keychain' : clearKey ? 'will be removed' : 'not set'}
+                hint={
+                  keyStored
+                    ? keyBoundElsewhere
+                      ? `stored for ${keyOrigin}`
+                      : 'stored in the OS keychain'
+                    : clearKey
+                      ? 'will be removed'
+                      : 'not set'
+                }
               >
                 <div className="flex items-center gap-2">
                   <input
                     type="password"
                     value={draft.apiKey}
                     onChange={(event) => set({ apiKey: event.target.value })}
-                    placeholder={keyStored ? 'Type to replace' : 'Optional'}
+                    placeholder={
+                      keyStored
+                        ? keyBoundElsewhere
+                          ? 'Re-enter for this endpoint'
+                          : 'Type to replace'
+                        : 'Optional'
+                    }
                     autoComplete="off"
                     disabled={clearKey}
                     className={cn(INPUT, 'flex-1')}
@@ -262,6 +299,12 @@ function Dialog({
                     </button>
                   )}
                 </div>
+                {keyBoundElsewhere && (
+                  <p className="mt-1.5 text-[10.5px] leading-relaxed text-danger">
+                    This key is bound to {keyOrigin}. Saving this endpoint clears it; enter a new
+                    key to authenticate to {draftOrigin}.
+                  </p>
+                )}
               </Field>
 
               <Field label="Models" hint="one per line">

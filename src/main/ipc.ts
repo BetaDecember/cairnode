@@ -108,13 +108,12 @@ export function registerIpc(): AgentHost {
   /**
    * A session may only point at a directory the user has actually chosen.
    * Otherwise a compromised renderer could create a session rooted at `/` and
-   * use the agent's tools to write anywhere on disk.
+   * use the agent's tools to write anywhere on disk. Stored sessions re-approve
+   * their own folder on load, so upgrades keep working; new sessions start
+   * empty and require the native folder picker.
    */
-  const approvedRoots = new Set<string>([app.getPath('home')])
-  const cwd = process.cwd()
-  if (cwd !== '/') approvedRoots.add(cwd)
-
-  let lastCwd = cwd === '/' ? app.getPath('home') : cwd
+  const approvedRoots = new Set<string>()
+  let lastCwd: string | null = null
 
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
@@ -142,7 +141,7 @@ export function registerIpc(): AgentHost {
     const input = CreateInput.parse(raw ?? {})
     const root = input.cwd ?? lastCwd
 
-    if (!approvedRoots.has(root)) {
+    if (!root || !approvedRoots.has(root)) {
       throw new Error('Choose the project folder with the folder picker first.')
     }
 

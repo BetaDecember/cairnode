@@ -6,10 +6,14 @@ import {
   DEFAULT_OPENAI_BASE_URL,
   DEFAULT_SETTINGS,
   effectiveNumCtx,
+  isLoopbackHost,
+  keyEndpointError,
+  keySurvivesUpdate,
   normalizeBaseUrl,
   normalizeModels,
   normalizeNumCtx,
   normalizeSettings,
+  originOf,
 } from './settings.ts'
 
 describe('settings', () => {
@@ -74,5 +78,56 @@ describe('settings', () => {
     assert.equal(effectiveNumCtx(settings, 'ollama'), 4096)
     assert.equal(effectiveNumCtx(settings, 'openai'), 32_768)
     assert.equal(effectiveNumCtx(settings, 'something-else'), 4096)
+  })
+})
+
+describe('key origin binding', () => {
+  it('uses scheme, host, and port as the origin', () => {
+    assert.equal(originOf('https://api.example.com/v1'), 'https://api.example.com')
+    assert.equal(originOf('http://127.0.0.1:1234/v1'), 'http://127.0.0.1:1234')
+    assert.equal(originOf('not a url'), null)
+  })
+
+  it('recognizes loopback hosts', () => {
+    assert.equal(isLoopbackHost('localhost'), true)
+    assert.equal(isLoopbackHost('api.localhost'), true)
+    assert.equal(isLoopbackHost('127.0.0.1'), true)
+    assert.equal(isLoopbackHost('127.10.20.30'), true)
+    assert.equal(isLoopbackHost('[::1]'), true)
+    assert.equal(isLoopbackHost('192.168.1.10'), false)
+  })
+
+  it('does not mistake a hostname that starts with 127 for a loopback literal', () => {
+    assert.equal(isLoopbackHost('127.0.0.1.evil.com'), false)
+    assert.equal(isLoopbackHost('127.0.0.999'), false)
+    assert.equal(isLoopbackHost('128.0.0.1'), false)
+  })
+
+  it('refuses plain HTTP to a remote host when a key is present', () => {
+    assert.match(String(keyEndpointError('http://api.example.com/v1')), /plain HTTP/)
+    assert.match(String(keyEndpointError('http://127.0.0.1.evil.com/v1')), /plain HTTP/)
+    assert.equal(keyEndpointError('https://api.example.com/v1'), null)
+    assert.equal(keyEndpointError('http://127.0.0.1:1234/v1'), null)
+    assert.equal(keyEndpointError('http://localhost:1234/v1'), null)
+  })
+
+  it('keeps a key only when the endpoint origin is unchanged', () => {
+    const current = {
+      hasKey: true,
+      origin: 'https://api.example.com',
+      baseUrl: 'https://api.example.com/v1',
+    }
+
+    assert.equal(keySurvivesUpdate(current, 'https://api.example.com/v2'), true)
+    assert.equal(keySurvivesUpdate(current, 'https://attacker.example/v1'), false)
+    assert.equal(keySurvivesUpdate(current, 'http://api.example.com/v1'), false)
+    assert.equal(keySurvivesUpdate({ ...current, hasKey: false }, current.baseUrl), false)
+  })
+
+  it('treats a legacy key without origin metadata as bound to its saved endpoint', () => {
+    const legacy = { hasKey: true, origin: null, baseUrl: 'https://api.example.com/v1' }
+
+    assert.equal(keySurvivesUpdate(legacy, 'https://api.example.com/v2'), true)
+    assert.equal(keySurvivesUpdate(legacy, 'https://attacker.example/v1'), false)
   })
 })

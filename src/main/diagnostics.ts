@@ -49,6 +49,7 @@ export async function writeDiagnosticsReport(options: {
     })
   }
 
+  const internal = await options.settings.internal()
   const report = buildDiagnosticsReport({
     generatedAt: new Date().toISOString(),
     app: {
@@ -69,6 +70,7 @@ export async function writeDiagnosticsReport(options: {
     userData: app.getPath('userData'),
     settings: await options.settings.read(),
     encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    secrets: internal.openai.apiKey ? [internal.openai.apiKey] : [],
     sessions,
     events: options.events,
   })

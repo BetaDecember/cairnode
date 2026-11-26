@@ -46,6 +46,27 @@ describe('redactText', () => {
   it('does nothing when there is nothing to redact', () => {
     assert.equal(redactText('fetch failed', HOME), 'fetch failed')
   })
+
+  it('redacts NVIDIA NIM and NVCF keys by prefix', () => {
+    assert.equal(
+      redactText('key nvapi-AUDIT-TEST-KEY and nvcf-abcdef123456 failed', HOME),
+      'key nv-[redacted] and nv-[redacted] failed',
+    )
+  })
+
+  it('redacts authorization headers and api-key fields', () => {
+    assert.equal(
+      redactText('Authorization: Basic dXNlcjpwYXNz x-api-key=abcdef123456', HOME),
+      'Authorization: [redacted] x-api-key=[redacted]',
+    )
+  })
+
+  it('redacts an exact secret even without a known prefix', () => {
+    assert.equal(
+      redactText('upstream rejected custom-Key-123456', HOME, ['custom-Key-123456']),
+      'upstream rejected [redacted]',
+    )
+  })
 })
 
 describe('redactPath', () => {
@@ -95,6 +116,7 @@ describe('buildDiagnosticsReport', () => {
       models: ['model-a'],
       numCtx: 16_384,
       apiKeySet: true,
+      apiKeyOrigin: 'https://api.example.com',
     },
   }
 
@@ -150,5 +172,35 @@ describe('buildDiagnosticsReport', () => {
       'GET https://api.example.com/v1 failed in ~/Desktop/Client',
     )
     assert.match(report.note, /does not contain your prompts/)
+    assert.match(report.note, /configured provider API key is removed/)
+  })
+
+  it('removes the configured key by value from event details', () => {
+    const report = buildDiagnosticsReport({
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      app: { version: '0.1.0', isDev: false, electron: '45', node: '24', chrome: '140' },
+      machine: {
+        platform: 'darwin',
+        arch: 'arm64',
+        osType: 'Darwin',
+        osRelease: '25.0.0',
+        osVersion: 'macOS 26',
+      },
+      home: HOME,
+      userData: `${HOME}/Library/Application Support/Cairnode`,
+      settings,
+      encryptionAvailable: true,
+      secrets: ['custom-Key-123456'],
+      sessions: [],
+      events: [
+        {
+          at: '2026-01-01T00:04:00.000Z',
+          kind: 'error',
+          detail: 'upstream rejected custom-Key-123456',
+        },
+      ],
+    })
+
+    assert.equal(report.events[0]?.detail, 'upstream rejected [redacted]')
   })
 })

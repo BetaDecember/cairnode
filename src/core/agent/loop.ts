@@ -508,7 +508,7 @@ export async function* runAgent(options: AgentRunOptions): AsyncGenerator<AgentE
 
         // Refuse an impossible call before the permission card, not after the
         // user has approved something that could never run.
-        const invalid = tool.validate?.(call.input, { cwd: options.cwd })
+        const invalid = await tool.validate?.(call.input, { cwd: options.cwd })
         if (invalid) {
           yield {
             type: 'tool_result',

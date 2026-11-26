@@ -1,28 +1,24 @@
 import { spawn } from 'node:child_process'
-import { constants } from 'node:fs'
 import fs from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { displayPath, resolveWithin } from './paths.ts'
+import { dirname, join } from 'node:path'
+import {
+  messageOf,
+  pathError,
+  readPathError,
+  readRegularFile,
+  writeFileNoFollow,
+  writePathError,
+} from './fs-safe.ts'
+import { runGrepWorker } from './grep-worker.ts'
+import { displayPath, globPatternError, isWithin, resolveRealWithin, resolveWithin } from './paths.ts'
 import { failure, truncate } from './types.ts'
-import type { Tool, ToolContext, ToolResult } from './types.ts'
+import type { Tool, ToolResult } from './types.ts'
 
-const MAX_READ_BYTES = 1_000_000
 const MAX_GREP_FILES = 2_000
+const MAX_GREP_FILE_BYTES = 400_000
+const MAX_GREP_RESULTS = 200
 /** Long enough for any real command; the tail is marked when this is exceeded. */
 const MAX_PERMISSION_DETAIL = 8_000
-
-/** Used by the mutating file tools to fail before a permission card is shown. */
-function pathError(
-  input: Record<string, unknown>,
-  context: Pick<ToolContext, 'cwd'>,
-): string | null {
-  try {
-    resolveWithin(context.cwd, String(input['path'] ?? ''))
-    return null
-  } catch (error) {
-    return error instanceof Error ? error.message : 'Path is outside the project.'
-  }
-}
 
 /* -------------------------------------------------------------------- Read */
 
@@ -45,15 +41,20 @@ const read: Tool = {
     },
     required: ['path'],
   },
+  validate: readPathError,
   async execute(input, context): Promise<ToolResult> {
-    const path = resolveWithin(context.cwd, String(input['path']))
-    const stat = await fs.stat(path)
-    if (stat.isDirectory()) return failure(`${input['path']} is a directory.`)
-    if (stat.size > MAX_READ_BYTES) {
-      return failure(`File is ${Math.round(stat.size / 1024)}KB; read a range instead.`)
+    const label = String(input['path'])
+    let path: string
+    try {
+      path = await resolveRealWithin(context.cwd, label)
+    } catch (error) {
+      return failure(messageOf(error))
     }
 
-    const raw = await fs.readFile(path, 'utf8')
+    const read = await readRegularFile(path, label)
+    if (!read.ok) return failure(read.error)
+    const raw = read.content
+
     const offset = Math.max(0, Number(input['offset'] ?? 0))
     const limit = Math.min(4000, Number(input['limit'] ?? 2000))
     const lines = raw.split('\n').slice(offset, offset + limit)
@@ -72,7 +73,7 @@ const write: Tool = {
   name: 'Write',
   description: 'Create or overwrite a file with the given content.',
   risk: 'medium',
-  validate: pathError,
+  validate: writePathError,
   summarize(input) {
     const content = String(input['content'] ?? '')
     return `${String(input['path'] ?? '?')} (${content.split('\n').length} lines)`
@@ -86,17 +87,25 @@ const write: Tool = {
     required: ['path', 'content'],
   },
   async execute(input, context): Promise<ToolResult> {
-    const path = resolveWithin(context.cwd, String(input['path']))
+    const label = String(input['path'])
+    let path: string
+    try {
+      path = await resolveRealWithin(context.cwd, label, { allowMissing: true })
+    } catch (error) {
+      return failure(messageOf(error))
+    }
+
     const content = String(input['content'] ?? '')
     await fs.mkdir(dirname(path), { recursive: true })
-    await fs.writeFile(path, content, 'utf8')
+    await writeFileNoFollow(path, content, label)
+    const shown = displayPath(context.cwd, resolveWithin(context.cwd, label))
 
     const lines = content.split('\n')
     return {
       ok: true,
-      content: `Wrote ${lines.length} lines to ${displayPath(context.cwd, path)}.`,
+      content: `Wrote ${lines.length} lines to ${shown}.`,
       diff: {
-        path: displayPath(context.cwd, path),
+        path: shown,
         added: lines.length,
         removed: 0,
         lines: lines.map((line) => `+${line}`),
@@ -126,19 +135,28 @@ const edit: Tool = {
     required: ['path', 'old_string', 'new_string'],
   },
   async execute(input, context): Promise<ToolResult> {
-    const path = resolveWithin(context.cwd, String(input['path']))
+    const label = String(input['path'])
+    let path: string
+    try {
+      path = await resolveRealWithin(context.cwd, label)
+    } catch (error) {
+      return failure(messageOf(error))
+    }
+
     const oldString = String(input['old_string'] ?? '')
     const newString = String(input['new_string'] ?? '')
     const replaceAll = input['replace_all'] === true
 
     if (!oldString) return failure('old_string is empty.')
 
-    const before = await fs.readFile(path, 'utf8')
+    const read = await readRegularFile(path, label)
+    if (!read.ok) return failure(read.error)
+    const before = read.content
     const occurrences = before.split(oldString).length - 1
 
     if (occurrences === 0) {
       return failure(
-        `No exact match for old_string in ${displayPath(context.cwd, path)}. Read the file and copy the text exactly, including indentation.`,
+        `No exact match for old_string in ${label}. Read the file and copy the text exactly, including indentation.`,
       )
     }
     if (occurrences > 1 && !replaceAll) {
@@ -151,13 +169,14 @@ const edit: Tool = {
       ? before.split(oldString).join(newString)
       : before.replace(oldString, newString)
 
-    await fs.writeFile(path, after, 'utf8')
+    await writeFileNoFollow(path, after, label)
+    const shown = displayPath(context.cwd, resolveWithin(context.cwd, label))
 
     return {
       ok: true,
-      content: `Edited ${displayPath(context.cwd, path)}.`,
+      content: `Edited ${shown}.`,
       diff: {
-        path: displayPath(context.cwd, path),
+        path: shown,
         added: newString.split('\n').length,
         removed: oldString.split('\n').length,
         lines: [
@@ -286,28 +305,42 @@ const glob: Tool = {
     },
     required: ['pattern'],
   },
+  validate(input) {
+    return globPatternError(String(input['pattern'] ?? ''))
+  },
   async execute(input, context): Promise<ToolResult> {
     const pattern = String(input['pattern'] ?? '').trim()
     if (!pattern) return failure('pattern is empty.')
+    const patternError = globPatternError(pattern)
+    if (patternError) return failure(patternError)
 
-    const matches: string[] = []
+    const root = await fs.realpath(context.cwd)
+    const matches: Array<{ entry: string; path: string }> = []
     for await (const entry of fs.glob(pattern, {
       cwd: context.cwd,
       exclude: ['**/node_modules/**', '**/.git/**', '**/out/**', '**/dist/**'],
     })) {
-      matches.push(entry)
+      // A symlink inside the project can still point outside it. Resolve every
+      // match and drop the ones whose real target escapes the root.
+      try {
+        const target = await fs.realpath(join(context.cwd, entry))
+        if (!isWithin(root, target)) continue
+        matches.push({ entry, path: target })
+      } catch {
+        continue
+      }
       if (matches.length >= 500) break
     }
 
     if (matches.length === 0) return { ok: true, content: `No files match ${pattern}.` }
 
     const withStats = await Promise.all(
-      matches.map(async (entry) => {
+      matches.map(async (match) => {
         try {
-          const stat = await fs.stat(`${context.cwd}/${entry}`)
-          return { entry, mtime: stat.mtimeMs }
+          const stat = await fs.stat(match.path)
+          return { entry: match.entry, mtime: stat.mtimeMs }
         } catch {
-          return { entry, mtime: 0 }
+          return { entry: match.entry, mtime: 0 }
         }
       }),
     )
@@ -336,20 +369,25 @@ const grep: Tool = {
     },
     required: ['pattern'],
   },
+  validate(input) {
+    return globPatternError(String(input['glob'] ?? '**/*'))
+  },
   async execute(input, context): Promise<ToolResult> {
     const pattern = String(input['pattern'] ?? '')
     if (!pattern) return failure('pattern is empty.')
     const fileGlob = String(input['glob'] ?? '**/*')
+    const globError = globPatternError(fileGlob)
+    if (globError) return failure(globError)
     const flags = input['case_sensitive'] === true ? '' : 'i'
 
-    let regex: RegExp
     try {
-      regex = new RegExp(pattern, flags)
+      new RegExp(pattern, flags)
     } catch (error) {
-      return failure(`Invalid regular expression: ${(error as Error).message}`)
+      return failure(`Invalid regular expression: ${messageOf(error)}`)
     }
 
-    const results: string[] = []
+    const root = await fs.realpath(context.cwd)
+    const files: string[] = []
     let scanned = 0
 
     for await (const entry of fs.glob(fileGlob, {
@@ -357,30 +395,32 @@ const grep: Tool = {
       exclude: ['**/node_modules/**', '**/.git/**', '**/out/**', '**/dist/**'],
     })) {
       if (scanned++ >= MAX_GREP_FILES) break
-      if (results.length >= 200) break
-
-      const absolute = `${context.cwd}/${entry}`
       try {
-        const stat = await fs.stat(absolute)
-        if (!stat.isFile() || stat.size > 400_000) continue
-        const content = await fs.readFile(absolute, 'utf8')
-        if (content.includes('\0')) continue
-
-        const lines = content.split('\n')
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i] ?? ''
-          if (regex.test(line)) {
-            results.push(`${entry}:${i + 1}: ${line.trim().slice(0, 240)}`)
-            if (results.length >= 200) break
-          }
-        }
+        const target = await fs.realpath(join(context.cwd, entry))
+        if (!isWithin(root, target)) continue
+        const stat = await fs.lstat(target)
+        if (!stat.isFile() || stat.size > MAX_GREP_FILE_BYTES) continue
+        files.push(target)
       } catch {
-        // Unreadable files are not an error for a search.
+        // Dropped entries cannot be searched safely.
       }
     }
 
-    if (results.length === 0) return { ok: true, content: `No matches for ${pattern}.` }
-    return { ok: true, content: truncate(results.join('\n')) }
+    if (files.length === 0) return { ok: true, content: `No matches for ${pattern}.` }
+
+    const outcome = await runGrepWorker({
+      pattern,
+      flags,
+      files,
+      root,
+      maxResults: MAX_GREP_RESULTS,
+      maxFileBytes: MAX_GREP_FILE_BYTES,
+    })
+    if (!outcome.ok) return failure(outcome.message)
+    if (outcome.matches.length === 0) return { ok: true, content: `No matches for ${pattern}.` }
+
+    const lines = outcome.matches.map((match) => `${match.file}:${match.line}: ${match.text}`)
+    return { ok: true, content: truncate(lines.join('\n')) }
   },
 }
 
